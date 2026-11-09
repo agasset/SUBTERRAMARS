@@ -187,12 +187,14 @@ func _draw_isometric_room() -> void:
 		draw_colored_polygon(known_contour, Color("171419"))
 	_draw_isometric_floor(cave, min_cell_x, max_cell_x, min_cell_y, max_cell_y)
 	if room_is_known:
-		_draw_isometric_contour(cave)
+		# The short passage throat is layered over the floor to seal raster gaps;
+		# the explorer is rendered afterward so it always stays in front.
 		_draw_isometric_corridors(cave)
+		_draw_isometric_contour(cave)
 	for obstacle in world.obstacles:
 		if _point_inside_selected_cave(obstacle.position) and _is_revealed(obstacle.position):
 			_draw_isometric_obstacle(obstacle)
-	if _point_inside_selected_cave(unit_position):
+	if _point_inside_selected_cave(unit_position) or _point_inside_isometric_exit(unit_position, cave):
 		_draw_isometric_explorer(unit_position)
 
 func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int, max_y: int) -> void:
@@ -241,6 +243,7 @@ func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int,
 
 func _draw_isometric_walls(cave: Dictionary) -> void:
 	var contour: PackedVector2Array = cave.contour
+	var exits := _visible_exits_for_cave(cave.id)
 	var screen_points := PackedVector2Array()
 	for point in contour:
 		screen_points.append(_world_to_screen(cave.position + point))
@@ -249,15 +252,38 @@ func _draw_isometric_walls(cave: Dictionary) -> void:
 		center_y += point.y
 	center_y /= float(screen_points.size())
 	var wall_height := 12.0 + zoom_level * 3.2
-	for i in range(screen_points.size()):
-		var a: Vector2 = screen_points[i]
-		var b: Vector2 = screen_points[(i + 1) % screen_points.size()]
-		var wall_direction := 1.0 if (a.y + b.y) * 0.5 >= center_y else -1.0
-		var wall_offset := Vector2(0, wall_height * wall_direction)
-		var wall := PackedVector2Array([a, b, b + wall_offset, a + wall_offset])
-		draw_colored_polygon(wall, Color("281c20") if b.x >= a.x else Color("352026"))
-		draw_line(a, a + wall_offset, Color("884735"), 1.0, true)
-		draw_line(b, b + wall_offset, Color("170f15"), 1.0, true)
+	for i in range(contour.size()):
+		var a: Vector2 = cave.position + contour[i]
+		var b: Vector2 = cave.position + contour[(i + 1) % contour.size()]
+		var edge := b - a
+		var edge_length := edge.length()
+		if edge_length <= 0.001:
+			continue
+		var cuts: Array[Vector2] = []
+		for exit_info in exits:
+			var closest := Geometry2D.get_closest_point_to_segment(exit_info.position, a, b)
+			if closest.distance_to(exit_info.position) > float(exit_info.width) * 0.5 + 4.0:
+				continue
+			var center_t := clampf((closest - a).dot(edge) / edge.length_squared(), 0.0, 1.0)
+			var half_gap_t := (float(exit_info.width) * 0.5 + 4.0) / edge_length
+			cuts.append(Vector2(maxf(0.0, center_t - half_gap_t), minf(1.0, center_t + half_gap_t)))
+		cuts.sort_custom(func(left: Vector2, right: Vector2) -> bool: return left.x < right.x)
+		var visible_ranges: Array[Vector2] = []
+		var cursor := 0.0
+		for cut in cuts:
+			if cut.x > cursor:
+				visible_ranges.append(Vector2(cursor, cut.x))
+			cursor = maxf(cursor, cut.y)
+		if cursor < 1.0:
+			visible_ranges.append(Vector2(cursor, 1.0))
+		for edge_range in visible_ranges:
+			var start := _world_to_screen(a.lerp(b, edge_range.x))
+			var finish := _world_to_screen(a.lerp(b, edge_range.y))
+			var wall_direction := 1.0 if (start.y + finish.y) * 0.5 >= center_y else -1.0
+			var wall_offset := Vector2(0, wall_height * wall_direction)
+			draw_colored_polygon(PackedVector2Array([start, finish, finish + wall_offset, start + wall_offset]), Color("281c20") if finish.x >= start.x else Color("352026"))
+			draw_line(start, start + wall_offset, Color("884735"), 1.0, true)
+			draw_line(finish, finish + wall_offset, Color("170f15"), 1.0, true)
 
 func _draw_isometric_contour(cave: Dictionary) -> void:
 	var contour: PackedVector2Array = cave.contour
@@ -298,58 +324,57 @@ func _draw_isometric_corridors(cave: Dictionary) -> void:
 				break
 		if corridor.is_empty():
 			continue
-		var centerline: PackedVector2Array = corridor.points
-		if corridor.b == cave.id:
-			centerline = PackedVector2Array()
-			for point_index in range(corridor.points.size() - 1, -1, -1):
-				centerline.append(corridor.points[point_index])
-		centerline = _trim_corridor_to_exit(centerline, exit_info.position)
-		var visible_points := _visible_isometric_corridor_points(centerline, cave.id)
-		if visible_points.size() < 2:
-			continue
-		_draw_isometric_corridor_mesh(visible_points, float(corridor.width))
+		var centerline := _isometric_exit_stub(exit_info, corridor, cave)
+		if centerline.size() >= 2:
+			_draw_isometric_corridor_mesh(centerline, float(corridor.width))
 
-func _trim_corridor_to_exit(centerline: PackedVector2Array, exit_position: Vector2) -> PackedVector2Array:
-	var trimmed := PackedVector2Array()
-	if centerline.size() < 2:
-		return trimmed
-	var closest_distance := INF
-	var closest_point := centerline[0]
-	var closest_segment := 0
-	for index in range(centerline.size() - 1):
-		var point := Geometry2D.get_closest_point_to_segment(exit_position, centerline[index], centerline[index + 1])
-		var distance := point.distance_squared_to(exit_position)
-		if distance < closest_distance:
-			closest_distance = distance
-			closest_point = point
-			closest_segment = index
-	trimmed.append(closest_point)
-	for index in range(closest_segment + 1, centerline.size()):
-		trimmed.append(centerline[index])
-	return trimmed
+func _isometric_exit_stub(exit_info: Dictionary, corridor: Dictionary, cave: Dictionary) -> PackedVector2Array:
+	# Draw a short isometric throat from the exact wall opening. The map's
+	# center-to-center tunnel path can bend independently of the room boundary,
+	# so it must not be stretched across the chamber as a second floor layer.
+	var outward: Vector2 = exit_info.direction.normalized()
+	if outward.length_squared() < 0.001:
+		return PackedVector2Array()
+	var route: PackedVector2Array = corridor.points
+	if corridor.b == cave.id:
+		route = PackedVector2Array()
+		for point_index in range(corridor.points.size() - 1, -1, -1):
+			route.append(corridor.points[point_index])
+	var nearest_index := 0
+	var nearest_distance := INF
+	for index in range(route.size()):
+		var distance: float = route[index].distance_squared_to(exit_info.position)
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest_index = index
+	var route_tangent: Vector2 = (route[mini(nearest_index + 1, route.size() - 1)] - route[nearest_index]).normalized()
+	var bend_side := signf(outward.cross(route_tangent))
+	if is_zero_approx(bend_side):
+		bend_side = 1.0 if posmod(int(corridor.id), 2) == 0 else -1.0
+	var side := outward.orthogonal() * bend_side
+	var length: float = clampf(float(cave.radius) * 0.30, 26.0, 40.0)
+	var bend: float = clampf(float(corridor.width) * 0.14, 3.0, 7.0)
+	var start: Vector2 = exit_info.position
+	var control_a := start + outward * length * 0.34
+	var control_b := start + outward * length * 0.72 + side * bend * 0.3
+	var finish := start + outward * length + side * bend
+	var points := PackedVector2Array()
+	for step in range(9):
+		var t := float(step) / 8.0
+		var inverse := 1.0 - t
+		points.append(inverse * inverse * inverse * start + 3.0 * inverse * inverse * t * control_a + 3.0 * inverse * t * t * control_b + t * t * t * finish)
+	return points
 
-func _visible_isometric_corridor_points(centerline: PackedVector2Array, cave_id: int) -> PackedVector2Array:
-	var visible := PackedVector2Array()
-	if centerline.size() < 2:
-		return visible
-	var spacing: float = maxf(3.0, world.cell_size * 0.42)
-	for segment_index in range(centerline.size() - 1):
-		var start: Vector2 = centerline[segment_index]
-		var finish: Vector2 = centerline[segment_index + 1]
-		var steps: int = maxi(1, ceili(start.distance_to(finish) / spacing))
-		for step in range(steps + 1):
-			if segment_index > 0 and step == 0:
+func _point_inside_isometric_exit(point: Vector2, cave: Dictionary) -> bool:
+	for exit_info in _visible_exits_for_cave(cave.id):
+		for corridor in world.corridors:
+			if corridor.id != exit_info.corridor_id:
 				continue
-			var point: Vector2 = start.lerp(finish, float(step) / float(steps))
-			if _inside_nonselected_cave(point, cave_id) or not _is_revealed(point):
-				return visible
-			visible.append(point)
-	return visible
-
-func _inside_nonselected_cave(point: Vector2, cave_id: int) -> bool:
-	for cave in world.caves:
-		if cave.id != cave_id and Geometry2D.is_point_in_polygon(point - cave.position, cave.contour):
-			return true
+			var centerline := _isometric_exit_stub(exit_info, corridor, cave)
+			for index in range(centerline.size() - 1):
+				var closest := Geometry2D.get_closest_point_to_segment(point, centerline[index], centerline[index + 1])
+				if closest.distance_to(point) <= float(corridor.width) * 0.55:
+					return true
 	return false
 
 func _draw_isometric_corridor_mesh(centerline: PackedVector2Array, width: float) -> void:

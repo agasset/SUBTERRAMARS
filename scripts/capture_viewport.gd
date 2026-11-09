@@ -40,4 +40,15 @@ func _capture() -> void:
 	var analysis_path := "res://reports/mode_analisi_sala.png"
 	var analysis_error := analysis_image.save_png(analysis_path)
 	print("SCREENSHOT %s error=%d size=%s zoom=%.2f" % [analysis_path, analysis_error, analysis_image.get_size(), analysis_zoom])
-	quit(0 if error == OK and dev_error == OK and analysis_error == OK else 1)
+	var exits: Array = instance.call("_visible_exits_for_cave", analysis_cave_id)
+	var passage_error := ERR_FILE_CANT_WRITE
+	if not exits.is_empty():
+		var exit_info: Dictionary = exits[0]
+		instance.set("unit_position", exit_info.position + exit_info.direction * 12.0)
+		instance.queue_redraw()
+		await process_frame
+		var passage_image := root.get_texture().get_image()
+		var passage_path := "res://reports/sortida_isometrica.png"
+		passage_error = passage_image.save_png(passage_path)
+		print("SCREENSHOT %s error=%d size=%s" % [passage_path, passage_error, passage_image.get_size()])
+	quit(0 if error == OK and dev_error == OK and analysis_error == OK and passage_error == OK else 1)

@@ -178,3 +178,7 @@ Verificació: `seed_validation.gd` aprovat amb 51/51 llavors, inclosa la prova d
 ## Sortides de sala isomètriques
 
 Les sortides descobertes ja no es dibuixen com a punts: es representen com galeries amb paviment i murs laterals, seguint la corba procedural original des de la boca de la sala. El renderitzat respecta la màscara revelada i s'atura al límit d'una sala veïna inexplorada. Verificació: `seed_validation.gd` aprovat amb 51/51 llavors; captura OpenGL actualitzada a `reports/mode_analisi_sala.png` i inspeccionada. No s'ha fet una sessió manual de moviment dins del joc.
+
+## Ajust del llindar isomètric i visibilitat del jugador
+
+La revisió de captura va mostrar que dibuixar el corredor sencer sobre la cambra el feia desencaixar de la boca i podia creuar visualment el jugador. Ara la cambra retalla el mur a la sortida i només hi dibuixa un tram curt de galeria des de la posició exacta de la boca; el paviment s'ordena sota la cambra i la unitat es dibuixa al davant tant dins la sala com dins aquest tram. La generació procedural i les rutes no s'han canviat. Verificació: `seed_validation.gd` aprovat amb 51/51 llavors; captures OpenGL revisades, inclosa `reports/sortida_isometrica.png` amb l'explorador al llindar. Encara no s'ha fet una sessió manual amb clics de moviment.
