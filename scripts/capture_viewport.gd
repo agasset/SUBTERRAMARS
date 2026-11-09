@@ -44,30 +44,42 @@ func _capture() -> void:
 	var passage_error := ERR_FILE_CANT_WRITE
 	if not exits.is_empty():
 		var exit_info: Dictionary = exits[0]
-		instance.set("unit_position", exit_info.position + exit_info.direction * 12.0)
+		var cave: Dictionary = active_world.caves[analysis_cave_id]
+		var inside_room: Vector2 = cave.position.lerp(exit_info.position, 0.6)
+		instance.set("unit_position", inside_room)
 		instance.queue_redraw()
 		await process_frame
 		var passage_image := root.get_texture().get_image()
 		var passage_path := "res://reports/sortida_isometrica.png"
 		passage_error = passage_image.save_png(passage_path)
 		print("SCREENSHOT %s error=%d size=%s" % [passage_path, passage_error, passage_image.get_size()])
-		var cave: Dictionary = active_world.caves[analysis_cave_id]
 		var corridor: Dictionary = {}
 		for candidate in active_world.corridors:
 			if candidate.id == exit_info.corridor_id:
 				corridor = candidate
 				break
 		if not corridor.is_empty():
-			var stub: PackedVector2Array = instance.call("_isometric_exit_stub", exit_info, corridor, cave)
-			var beyond_tunnel: Vector2 = stub[-1] + exit_info.direction * (float(corridor.width) * 0.8 + 15.0)
-			instance.set("unit_position", stub[stub.size() / 2])
-			instance.set("move_path", [beyond_tunnel])
-			instance.set("move_target", beyond_tunnel)
-			instance.set("selected_route", [beyond_tunnel])
+			var beyond_room: Vector2 = exit_info.position + exit_info.direction * 12.0
+			var blocked_route: Array[Vector2] = [inside_room, beyond_room]
+			var map_route: Array[Vector2] = [beyond_room]
+			instance.set("moving", false)
+			instance.set("move_path", [])
+			instance.set("selected_route", [])
+			instance.set("chained_cave_id", -1)
+			instance.set("unit_position", inside_room)
+			instance.set("move_path", blocked_route)
+			instance.set("move_target", beyond_room)
+			instance.set("selected_route", blocked_route.duplicate())
+			instance.set("moving", true)
+			instance.call("_process", 1.0)
+			print("INSPECTION_EXIT_BLOCKED analysis_mode=%s inside_room=%s moving=%s" % [instance.get("analysis_mode"), instance.call("_point_inside_cave_id", instance.get("unit_position"), analysis_cave_id), instance.get("moving")])
+			instance.call("_exit_inspection")
+			instance.set("move_path", map_route)
+			instance.set("move_target", beyond_room)
+			instance.set("selected_route", map_route.duplicate())
 			instance.set("moving", true)
 			instance.call("_process", 1.0)
 			instance.set("moving", false)
-			instance.call("_exit_inspection")
 			await process_frame
 			var transition_image := root.get_texture().get_image()
 			var transition_path := "res://reports/transicio_mapa_tunel.png"

@@ -194,3 +194,7 @@ S'ha corregit el canvi prematur de vista: després de creuar la paret, el jugado
 ## Sortida manual del mode d'inspecció
 
 S'ha retirat el canvi automàtic de vista en travessar una boca. La inspecció es manté activa mentre el jugador recorre el corredor; en prémer «SURT D'INSPECCIÓ» (o Esc) es torna al mapa general, centrat i amb zoom 1.1. El jugador continua dibuixat al corredor connectat mentre la inspecció és activa. Verificació: `seed_validation.gd` aprovat amb 51/51 llavors; la prova mou l'unitat pel tram, comprova que la vista no canvia automàticament i activa la sortida manual, validant que el túnel queda visible al mapa.
+
+## El jugador ha de canviar de vista abans de sortir de la sala
+
+En mode d'inspecció, la ruta de moviment queda retallada al contorn transitable de la sala seleccionada i cada pas de moviment comprova el límit abans d'actualitzar la posició. Si una ordre intenta travessar una sortida, el jugador s'atura a l'última posició interior i apareix l'avís «SURT D'INSPECCIÓ PER TRAVESSAR LA SORTIDA». Cal prémer «SURT D'INSPECCIÓ» (o Esc) per canviar al mapa; aleshores es pot continuar el moviment pel túnel sense perdre l'estat ni la posició del món. Verificació: `seed_validation.gd` aprovat amb 51/51 llavors, incloent moviment dins la sala, bloqueig del límit, canvi al mapa i moviment posterior. Captura OpenGL revisada a `reports/transicio_mapa_tunel.png`; el personatge roman dins la sala fins al canvi de vista.

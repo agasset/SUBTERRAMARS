@@ -38,10 +38,10 @@ func _initialize() -> void:
 		rows.append(row)
 		if not (same and count_ok and corridor_geometry_ok and connected and cave_spawns_ok and path_ok and obstacle_ok and visibility_ok and scanner_scope_ok and exit_proximity_ok and exit_traversal_ok and player_map_ok and scanner_selection_ok and reveal_ok and isometric_mapping_ok and spawn_ok):
 			failures.append("seed %d: %s" % [seed_value, JSON.stringify(row)])
-	var manual_exit_ok := _analysis_requires_manual_exit(Generator.generate(134027))
-	if not manual_exit_ok:
-		failures.append("inspection should remain active while leaving the cave and return only after the exit action")
-	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "manual_exit_inspection_valid": manual_exit_ok, "results": rows, "failures": failures}
+	var room_boundary_ok := _analysis_blocks_exit_without_perspective_change(Generator.generate(134027))
+	if not room_boundary_ok:
+		failures.append("inspection should block crossing the room boundary until the player switches to the map")
+	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "inspection_room_boundary_valid": room_boundary_ok, "results": rows, "failures": failures}
 	DirAccess.make_dir_recursive_absolute("res://reports")
 	var file := FileAccess.open("res://reports/seed_validation_50.json", FileAccess.WRITE)
 	if file:
@@ -52,7 +52,7 @@ func _initialize() -> void:
 		push_error(failure)
 	quit(0 if failures.is_empty() else 1)
 
-func _analysis_requires_manual_exit(world: Dictionary) -> bool:
+func _analysis_blocks_exit_without_perspective_change(world: Dictionary) -> bool:
 	navigation_probe.set("world", world)
 	var cave_id: int = world.entry
 	var cave: Dictionary = world.caves[cave_id]
@@ -81,32 +81,39 @@ func _analysis_requires_manual_exit(world: Dictionary) -> bool:
 	var stub: PackedVector2Array = navigation_probe.call("_isometric_exit_stub", exit_info, selected_corridor, cave)
 	if stub.size() < 3:
 		return false
-	var start_position: Vector2 = exit_position - exit_direction * 5.0
-	var throat_position: Vector2 = stub[stub.size() / 2]
-	var tunnel_end: Vector2 = stub[-1]
-	var path_to_throat: Array[Vector2] = [throat_position]
+	var start_position: Vector2 = cave.position
+	var safe_room_target: Vector2 = cave.position.lerp(exit_position, 0.6)
+	var path_inside_room: Array[Vector2] = [safe_room_target]
 	navigation_probe.set("unit_position", start_position)
-	navigation_probe.set("move_path", path_to_throat)
-	navigation_probe.set("selected_route", path_to_throat.duplicate())
-	navigation_probe.set("move_target", throat_position)
+	navigation_probe.set("move_path", path_inside_room)
+	navigation_probe.set("selected_route", path_inside_room.duplicate())
+	navigation_probe.set("move_target", safe_room_target)
 	navigation_probe.set("moving", true)
 	navigation_probe.call("_process", 1.0)
-	var stayed_in_tunnel_view: bool = bool(navigation_probe.get("analysis_mode")) and navigation_probe.call("_point_inside_isometric_exit", throat_position, cave)
-	var beyond_tunnel: Vector2 = tunnel_end + exit_direction * (float(selected_corridor.width) * 0.8 + 15.0)
-	var path_beyond_tunnel: Array[Vector2] = [beyond_tunnel]
-	navigation_probe.set("move_path", path_beyond_tunnel)
-	navigation_probe.set("selected_route", path_beyond_tunnel.duplicate())
-	navigation_probe.set("move_target", beyond_tunnel)
+	var can_move_inside_room: bool = navigation_probe.get("unit_position").distance_to(start_position) > 0.1 and navigation_probe.call("_point_inside_cave_id", navigation_probe.get("unit_position"), cave_id)
+	var beyond_room: Vector2 = exit_position + exit_direction * 12.0
+	var attempted_exit: Array[Vector2] = [safe_room_target, beyond_room]
+	navigation_probe.set("unit_position", start_position)
+	navigation_probe.set("move_path", attempted_exit)
+	navigation_probe.set("selected_route", attempted_exit.duplicate())
+	navigation_probe.set("move_target", beyond_room)
 	navigation_probe.set("moving", true)
 	navigation_probe.call("_process", 1.0)
-	var inspection_kept_until_button: bool = bool(navigation_probe.get("analysis_mode")) and int(navigation_probe.get("selected_cave")) == cave_id
+	var blocked_at_room_boundary: bool = not bool(navigation_probe.get("moving")) and navigation_probe.get("move_path").is_empty() and bool(navigation_probe.get("analysis_mode")) and int(navigation_probe.get("selected_cave")) == cave_id and navigation_probe.call("_point_inside_cave_id", navigation_probe.get("unit_position"), cave_id)
 	navigation_probe.call("_exit_inspection")
 	var returned_to_map: bool = not bool(navigation_probe.get("analysis_mode")) and int(navigation_probe.get("selected_cave")) == -1
 	var corridor_visible_on_map: bool = navigation_probe.call("_should_draw_corridor", selected_corridor)
 	var overview_zoom_keeps_tunnel_readable: bool = is_equal_approx(float(navigation_probe.get("zoom_level")), 1.1)
+	navigation_probe.set("unit_position", safe_room_target)
+	navigation_probe.set("move_path", attempted_exit.duplicate())
+	navigation_probe.set("selected_route", attempted_exit.duplicate())
+	navigation_probe.set("move_target", beyond_room)
+	navigation_probe.set("moving", true)
+	navigation_probe.call("_process", 1.0)
+	var can_leave_after_switching: bool = navigation_probe.get("unit_position").distance_to(start_position) > 0.1
 	navigation_probe.set("moving", false)
 	navigation_probe.set("move_path", [])
-	return stayed_in_tunnel_view and inspection_kept_until_button and returned_to_map and corridor_visible_on_map and overview_zoom_keeps_tunnel_readable
+	return can_move_inside_room and blocked_at_room_boundary and returned_to_map and corridor_visible_on_map and overview_zoom_keeps_tunnel_readable and can_leave_after_switching
 
 func _canonical(world: Dictionary) -> String:
 	var result: Array = []

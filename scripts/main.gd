@@ -61,17 +61,52 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(queue_redraw)
 
 func _process(delta: float) -> void:
+	if moving and analysis_mode:
+		if selected_cave != current_cave_id:
+			moving = false
+			move_path.clear()
+			selected_route.clear()
+			chained_cave_id = -1
+			if is_instance_valid(status_label):
+				status_label.text = "SURT D'INSPECCIÓ PER MOURE'T ENTRE SALES"
+		else:
+			var safe_path := _path_prefix_inside_cave(move_path, unit_position, selected_cave)
+			if safe_path.size() < move_path.size():
+				move_path = safe_path
+				chained_cave_id = -1
+				selected_route = safe_path.duplicate()
+				if move_path.is_empty():
+					moving = false
+				else:
+					move_target = move_path.back()
+				if is_instance_valid(status_label):
+					status_label.text = "SURT D'INSPECCIÓ PER TRAVESSAR LA SORTIDA"
 	if moving:
 		var remaining_distance := 145.0 * delta
 		while remaining_distance > 0.0 and not move_path.is_empty():
 			var difference: Vector2 = move_path[0] - unit_position
 			var distance := difference.length()
-			if distance <= remaining_distance:
-				unit_position = move_path.pop_front()
+			var next_position: Vector2
+			var reaches_waypoint: bool = distance <= remaining_distance
+			if reaches_waypoint:
+				next_position = move_path[0]
 				remaining_distance -= distance
 			else:
-				unit_position += difference / distance * remaining_distance
+				next_position = unit_position + difference / distance * remaining_distance
 				remaining_distance = 0.0
+			if analysis_mode and selected_cave == current_cave_id and not _point_inside_cave_id(next_position, selected_cave):
+				moving = false
+				move_target = unit_position
+				move_path.clear()
+				selected_route.clear()
+				chained_cave_id = -1
+				remaining_distance = 0.0
+				if is_instance_valid(status_label):
+					status_label.text = "SURT D'INSPECCIÓ PER TRAVESSAR LA SORTIDA"
+				break
+			unit_position = next_position
+			if reaches_waypoint:
+				move_path.pop_front()
 		if move_path.is_empty():
 			unit_position = move_target
 			_update_current_cave()
@@ -803,6 +838,30 @@ func _exit_inspection() -> void:
 	if not analysis_mode:
 		return
 	_return_to_map(1.1)
+
+func _path_prefix_inside_cave(path: Array[Vector2], from: Vector2, cave_id: int) -> Array[Vector2]:
+	var safe_path: Array[Vector2] = []
+	if cave_id < 0 or cave_id >= world.caves.size():
+		return safe_path
+	var previous := from
+	for destination in path:
+		var distance: float = previous.distance_to(destination)
+		var steps: int = maxi(1, ceili(distance / maxf(1.0, world.cell_size * 0.25)))
+		var segment_is_inside := true
+		for step in range(1, steps + 1):
+			var point := previous.lerp(destination, float(step) / float(steps))
+			if not _point_inside_cave_id(point, cave_id):
+				segment_is_inside = false
+				break
+		if not segment_is_inside:
+			break
+		safe_path.append(destination)
+		previous = destination
+	return safe_path
+
+func _point_inside_cave_id(point: Vector2, cave_id: int) -> bool:
+	var cave: Dictionary = world.caves[cave_id]
+	return Geometry2D.is_point_in_polygon(point - cave.position, cave.contour)
 
 func _nearest_visible_preview_cell(cave_id: int, point: Vector2) -> Vector2:
 	var cave: Dictionary = world.caves[cave_id]
