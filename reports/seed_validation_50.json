@@ -1,7 +1,7 @@
 {
-	"exit_transition_valid": true,
 	"failures": [],
 	"generator_version": "p0b-2",
+	"manual_exit_inspection_valid": true,
 	"passed": true,
 	"results": [
 		{

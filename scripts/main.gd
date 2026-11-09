@@ -74,7 +74,6 @@ func _process(delta: float) -> void:
 				remaining_distance = 0.0
 		if move_path.is_empty():
 			unit_position = move_target
-			_return_to_map_if_player_left_selected_cave()
 			_update_current_cave()
 			moving = false
 			selected_route.clear()
@@ -89,7 +88,6 @@ func _process(delta: float) -> void:
 		var current_cell := Vector2i(floori(unit_position.x / world.cell_size), floori(unit_position.y / world.cell_size))
 		if current_cell != last_revealed_cell:
 			_reveal_around(unit_position, 5)
-		_return_to_map_if_player_left_selected_cave()
 		_update_current_cave()
 		_discover_exit_near_unit()
 		queue_redraw()
@@ -196,7 +194,7 @@ func _draw_isometric_room() -> void:
 	for obstacle in world.obstacles:
 		if _point_inside_selected_cave(obstacle.position) and _is_revealed(obstacle.position):
 			_draw_isometric_obstacle(obstacle)
-	if _point_inside_selected_cave(unit_position) or _point_inside_isometric_exit(unit_position, cave):
+	if _point_inside_selected_cave(unit_position) or _point_inside_isometric_exit(unit_position, cave) or _point_inside_connected_corridor(unit_position, cave):
 		_draw_isometric_explorer(unit_position)
 
 func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int, max_y: int) -> void:
@@ -379,6 +377,18 @@ func _point_inside_isometric_exit(point: Vector2, cave: Dictionary) -> bool:
 					return true
 	return false
 
+func _point_inside_connected_corridor(point: Vector2, cave: Dictionary) -> bool:
+	for exit_info in _visible_exits_for_cave(cave.id):
+		for corridor in world.corridors:
+			if corridor.id != exit_info.corridor_id:
+				continue
+			var points: PackedVector2Array = corridor.points
+			for index in range(points.size() - 1):
+				var closest := Geometry2D.get_closest_point_to_segment(point, points[index], points[index + 1])
+				if closest.distance_to(point) <= float(corridor.width) * 0.55:
+					return true
+	return false
+
 func _draw_isometric_corridor_mesh(centerline: PackedVector2Array, width: float) -> void:
 	var left_edge := PackedVector2Array()
 	var right_edge := PackedVector2Array()
@@ -470,9 +480,10 @@ func _build_ui() -> void:
 	new_game_button = _button("NOVA PARTIDA", Vector2(168, 76), Vector2(96, 34))
 	new_game_button.pressed.connect(_on_new_pressed)
 	left.add_child(new_game_button)
-	map_return_button = _button("TORNA AL MAPA", Vector2(16, 76), Vector2(248, 34))
+	map_return_button = _button("SURT D'INSPECCIÓ", Vector2(16, 76), Vector2(248, 34))
 	map_return_button.visible = false
-	map_return_button.pressed.connect(_return_to_map)
+	map_return_button.tooltip_text = "Torna a la vista general del mapa."
+	map_return_button.pressed.connect(_exit_inspection)
 	left.add_child(map_return_button)
 	status_label = _add_label(left, "GENERADOR P0B · %s" % Generator.GENERATOR_VERSION, 10, Color("89b0bb"), Vector2(16, 116), Vector2(248, 18))
 
@@ -662,7 +673,7 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventKey and not event.pressed and event.keycode == KEY_SPACE:
 		dragging = false
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE and analysis_mode:
-		_return_to_map()
+		_exit_inspection()
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_E:
 		_scan_local()
 
@@ -788,17 +799,9 @@ func _return_to_map(requested_zoom: float = 0.62) -> void:
 	_update_view_mode_ui()
 	queue_redraw()
 
-func _return_to_map_if_player_left_selected_cave() -> void:
-	if not analysis_mode or selected_cave < 0 or selected_cave != current_cave_id:
+func _exit_inspection() -> void:
+	if not analysis_mode:
 		return
-	if _point_inside_selected_cave(unit_position):
-		return
-	# Let the explorer cross the visible isometric throat before changing scale.
-	# Returning at the cave boundary skips the passage and makes it feel absent.
-	var cave: Dictionary = world.caves[selected_cave]
-	if _point_inside_isometric_exit(unit_position, cave):
-		return
-	# Keep the nearby room and passage readable on the overview during egress.
 	_return_to_map(1.1)
 
 func _nearest_visible_preview_cell(cave_id: int, point: Vector2) -> Vector2:

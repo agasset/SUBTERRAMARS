@@ -190,3 +190,7 @@ Quan l'explorador travessa el límit de la sala seleccionada cap a una galeria, 
 ## Transició amb el túnel visible
 
 S'ha corregit el canvi prematur de vista: després de creuar la paret, el jugador continua veient i recorrent el tram isomètric curt del túnel; només en deixar-lo torna al mapa general. El mapa se centra en el jugador amb zoom 1.1 per mostrar la cambra propera i el corredor descobert, en lloc de saltar a l'escala global 0.62 durant la sortida. Verificació: `seed_validation.gd` aprovat amb 51/51 llavors i comprovació que el mode isomètric es manté dins del tram, després torna al mapa amb el corredor dibuixat. Captura OpenGL a `reports/transicio_mapa_tunel.png` (map_mode=true, corridor_visible=true).
+
+## Sortida manual del mode d'inspecció
+
+S'ha retirat el canvi automàtic de vista en travessar una boca. La inspecció es manté activa mentre el jugador recorre el corredor; en prémer «SURT D'INSPECCIÓ» (o Esc) es torna al mapa general, centrat i amb zoom 1.1. El jugador continua dibuixat al corredor connectat mentre la inspecció és activa. Verificació: `seed_validation.gd` aprovat amb 51/51 llavors; la prova mou l'unitat pel tram, comprova que la vista no canvia automàticament i activa la sortida manual, validant que el túnel queda visible al mapa.

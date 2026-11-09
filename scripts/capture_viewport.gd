@@ -67,6 +67,7 @@ func _capture() -> void:
 			instance.set("moving", true)
 			instance.call("_process", 1.0)
 			instance.set("moving", false)
+			instance.call("_exit_inspection")
 			await process_frame
 			var transition_image := root.get_texture().get_image()
 			var transition_path := "res://reports/transicio_mapa_tunel.png"
