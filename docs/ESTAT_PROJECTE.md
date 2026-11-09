@@ -174,3 +174,7 @@ Albert ha aprovat les dues referències visuals com a format real: mapa de xarxa
 `main.gd` projecta contorn, terra revelat, parets, obstacles, sortides conegudes i explorador en isomètric. El renderer llegeix la mateixa geometria, màscara transitable, coordenades, estat i boira de guerra que el mapa superior. La conversió de pantalla a món és inversible i s'ha comprovat sobre centres i punts del contorn; canviar de vista no regenera ni mou la unitat. El terra i sprites són encara geometria provisional; flora, fauna, robot, llums i recursos com a entitats procedurals encara no estan implementats.
 
 Verificació: `seed_validation.gd` aprovat amb 51/51 llavors, inclosa la prova de projecció isomètrica d'anada/tornada. Captura del renderer amb OpenGL generada a `reports/mode_analisi_sala.png`; és una comprovació visual de prototip, no una sessió manual de joc. Següent pas: provar moviment amb clic dins la vista isomètrica i millorar parets, materials i contingut procedural de sala.
+
+## Sortides de sala isomètriques
+
+Les sortides descobertes ja no es dibuixen com a punts: es representen com galeries amb paviment i murs laterals, seguint la corba procedural original des de la boca de la sala. El renderitzat respecta la màscara revelada i s'atura al límit d'una sala veïna inexplorada. Verificació: `seed_validation.gd` aprovat amb 51/51 llavors; captura OpenGL actualitzada a `reports/mode_analisi_sala.png` i inspeccionada. No s'ha fet una sessió manual de moviment dins del joc.

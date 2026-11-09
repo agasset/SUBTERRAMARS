@@ -188,7 +188,7 @@ func _draw_isometric_room() -> void:
 	_draw_isometric_floor(cave, min_cell_x, max_cell_x, min_cell_y, max_cell_y)
 	if room_is_known:
 		_draw_isometric_contour(cave)
-		_draw_isometric_exits(cave)
+		_draw_isometric_corridors(cave)
 	for obstacle in world.obstacles:
 		if _point_inside_selected_cave(obstacle.position) and _is_revealed(obstacle.position):
 			_draw_isometric_obstacle(obstacle)
@@ -286,11 +286,109 @@ func _draw_isometric_contour(cave: Dictionary) -> void:
 		if cursor < 1.0:
 			draw_line(_world_to_screen(a.lerp(b, cursor)), _world_to_screen(b), Color("b75b37"), maxf(1.5, zoom_level * 0.55), true)
 
-func _draw_isometric_exits(cave: Dictionary) -> void:
+func _draw_isometric_corridors(cave: Dictionary) -> void:
+	# Render a discovered exit as the actual passage leaving the room, not as a
+	# map-style dot. The passage uses the same generated path and reveal mask as
+	# navigation; the far room stays hidden behind its unrevealed contour.
 	for exit_info in _visible_exits_for_cave(cave.id):
-		var marker := _world_to_screen(exit_info.position)
-		draw_circle(marker, maxf(3.0, zoom_level * 0.75), CYAN)
-		draw_arc(marker, maxf(5.0, zoom_level * 1.2), 0, TAU, 16, Color("c4ffff"), 1.2)
+		var corridor: Dictionary = {}
+		for candidate in world.corridors:
+			if candidate.id == exit_info.corridor_id:
+				corridor = candidate
+				break
+		if corridor.is_empty():
+			continue
+		var centerline: PackedVector2Array = corridor.points
+		if corridor.b == cave.id:
+			centerline = PackedVector2Array()
+			for point_index in range(corridor.points.size() - 1, -1, -1):
+				centerline.append(corridor.points[point_index])
+		centerline = _trim_corridor_to_exit(centerline, exit_info.position)
+		var visible_points := _visible_isometric_corridor_points(centerline, cave.id)
+		if visible_points.size() < 2:
+			continue
+		_draw_isometric_corridor_mesh(visible_points, float(corridor.width))
+
+func _trim_corridor_to_exit(centerline: PackedVector2Array, exit_position: Vector2) -> PackedVector2Array:
+	var trimmed := PackedVector2Array()
+	if centerline.size() < 2:
+		return trimmed
+	var closest_distance := INF
+	var closest_point := centerline[0]
+	var closest_segment := 0
+	for index in range(centerline.size() - 1):
+		var point := Geometry2D.get_closest_point_to_segment(exit_position, centerline[index], centerline[index + 1])
+		var distance := point.distance_squared_to(exit_position)
+		if distance < closest_distance:
+			closest_distance = distance
+			closest_point = point
+			closest_segment = index
+	trimmed.append(closest_point)
+	for index in range(closest_segment + 1, centerline.size()):
+		trimmed.append(centerline[index])
+	return trimmed
+
+func _visible_isometric_corridor_points(centerline: PackedVector2Array, cave_id: int) -> PackedVector2Array:
+	var visible := PackedVector2Array()
+	if centerline.size() < 2:
+		return visible
+	var spacing: float = maxf(3.0, world.cell_size * 0.42)
+	for segment_index in range(centerline.size() - 1):
+		var start: Vector2 = centerline[segment_index]
+		var finish: Vector2 = centerline[segment_index + 1]
+		var steps: int = maxi(1, ceili(start.distance_to(finish) / spacing))
+		for step in range(steps + 1):
+			if segment_index > 0 and step == 0:
+				continue
+			var point: Vector2 = start.lerp(finish, float(step) / float(steps))
+			if _inside_nonselected_cave(point, cave_id) or not _is_revealed(point):
+				return visible
+			visible.append(point)
+	return visible
+
+func _inside_nonselected_cave(point: Vector2, cave_id: int) -> bool:
+	for cave in world.caves:
+		if cave.id != cave_id and Geometry2D.is_point_in_polygon(point - cave.position, cave.contour):
+			return true
+	return false
+
+func _draw_isometric_corridor_mesh(centerline: PackedVector2Array, width: float) -> void:
+	var left_edge := PackedVector2Array()
+	var right_edge := PackedVector2Array()
+	for index in range(centerline.size()):
+		var previous: Vector2 = centerline[maxi(0, index - 1)]
+		var following: Vector2 = centerline[mini(centerline.size() - 1, index + 1)]
+		var tangent := (following - previous).normalized()
+		if tangent.length_squared() < 0.001:
+			continue
+		var normal := Vector2(-tangent.y, tangent.x) * width * 0.5
+		left_edge.append(centerline[index] + normal)
+		right_edge.append(centerline[index] - normal)
+	if left_edge.size() < 2:
+		return
+	var vertical_height := clampf(width * zoom_level * 0.36, 5.0, 24.0)
+	# Raised tunnel walls first, then the walkable floor over their lower edges.
+	for index in range(left_edge.size() - 1):
+		var left_a := _world_to_screen(left_edge[index])
+		var left_b := _world_to_screen(left_edge[index + 1])
+		var right_a := _world_to_screen(right_edge[index])
+		var right_b := _world_to_screen(right_edge[index + 1])
+		draw_colored_polygon(PackedVector2Array([left_a, left_b, left_b - Vector2(0, vertical_height), left_a - Vector2(0, vertical_height)]), Color("392126"))
+		draw_colored_polygon(PackedVector2Array([right_a, right_b, right_b - Vector2(0, vertical_height), right_a - Vector2(0, vertical_height)]), Color("241a20"))
+	var floor_shape := PackedVector2Array()
+	for point in left_edge:
+		floor_shape.append(_world_to_screen(point))
+	for index in range(right_edge.size() - 1, -1, -1):
+		floor_shape.append(_world_to_screen(right_edge[index]))
+	draw_colored_polygon(floor_shape, Color("4a2927"))
+	var left_rim := PackedVector2Array()
+	var right_rim := PackedVector2Array()
+	for point in left_edge:
+		left_rim.append(_world_to_screen(point) - Vector2(0, vertical_height))
+	for point in right_edge:
+		right_rim.append(_world_to_screen(point) - Vector2(0, vertical_height))
+	draw_polyline(left_rim, Color("b45c3d"), maxf(1.0, zoom_level * 0.22), true)
+	draw_polyline(right_rim, Color("744136"), maxf(1.0, zoom_level * 0.18), true)
 
 func _draw_isometric_obstacle(obstacle: Dictionary) -> void:
 	var radius: float = obstacle.radius
