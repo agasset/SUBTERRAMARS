@@ -777,12 +777,12 @@ func _update_view_mode_ui() -> void:
 	if is_instance_valid(analysis_tools_panel):
 		analysis_tools_panel.visible = analysis_mode
 
-func _return_to_map() -> void:
+func _return_to_map(requested_zoom: float = 0.62) -> void:
 	analysis_mode = false
 	selected_cave = -1
 	selected_cave_focus = Vector2.ZERO
 	selected_route.clear()
-	zoom_level = 0.62
+	zoom_level = requested_zoom
 	camera_offset = -((unit_position - Generator.WORLD_RECT.size * 0.5) * zoom_level)
 	_update_scan_availability()
 	_update_view_mode_ui()
@@ -791,8 +791,15 @@ func _return_to_map() -> void:
 func _return_to_map_if_player_left_selected_cave() -> void:
 	if not analysis_mode or selected_cave < 0 or selected_cave != current_cave_id:
 		return
-	if not _point_inside_selected_cave(unit_position):
-		_return_to_map()
+	if _point_inside_selected_cave(unit_position):
+		return
+	# Let the explorer cross the visible isometric throat before changing scale.
+	# Returning at the cave boundary skips the passage and makes it feel absent.
+	var cave: Dictionary = world.caves[selected_cave]
+	if _point_inside_isometric_exit(unit_position, cave):
+		return
+	# Keep the nearby room and passage readable on the overview during egress.
+	_return_to_map(1.1)
 
 func _nearest_visible_preview_cell(cave_id: int, point: Vector2) -> Vector2:
 	var cave: Dictionary = world.caves[cave_id]

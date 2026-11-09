@@ -186,3 +186,7 @@ La revisió de captura va mostrar que dibuixar el corredor sencer sobre la cambr
 ## Retorn automàtic al mapa en sortir de la sala
 
 Quan l'explorador travessa el límit de la sala seleccionada cap a una galeria, la vista isomètrica retorna al mapa general i centra la càmera en la seva posició. L'ordre de moviment i la ruta continuen actives, de manera que el jugador es veu recórrer el mapa i pot arribar a la sala següent. La transició no s'activa només per seleccionar o enfocar una altra cambra. Verificació: bateria `seed_validation.gd` aprovada amb 51/51 llavors; ara inclou una prova de sortida de cambra i retorn automàtic al mapa. No s'ha fet una sessió manual de clics.
+
+## Transició amb el túnel visible
+
+S'ha corregit el canvi prematur de vista: després de creuar la paret, el jugador continua veient i recorrent el tram isomètric curt del túnel; només en deixar-lo torna al mapa general. El mapa se centra en el jugador amb zoom 1.1 per mostrar la cambra propera i el corredor descobert, en lloc de saltar a l'escala global 0.62 durant la sortida. Verificació: `seed_validation.gd` aprovat amb 51/51 llavors i comprovació que el mode isomètric es manté dins del tram, després torna al mapa amb el corredor dibuixat. Captura OpenGL a `reports/transicio_mapa_tunel.png` (map_mode=true, corridor_visible=true).

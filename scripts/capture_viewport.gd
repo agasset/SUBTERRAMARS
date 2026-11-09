@@ -51,4 +51,26 @@ func _capture() -> void:
 		var passage_path := "res://reports/sortida_isometrica.png"
 		passage_error = passage_image.save_png(passage_path)
 		print("SCREENSHOT %s error=%d size=%s" % [passage_path, passage_error, passage_image.get_size()])
+		var cave: Dictionary = active_world.caves[analysis_cave_id]
+		var corridor: Dictionary = {}
+		for candidate in active_world.corridors:
+			if candidate.id == exit_info.corridor_id:
+				corridor = candidate
+				break
+		if not corridor.is_empty():
+			var stub: PackedVector2Array = instance.call("_isometric_exit_stub", exit_info, corridor, cave)
+			var beyond_tunnel: Vector2 = stub[-1] + exit_info.direction * (float(corridor.width) * 0.8 + 15.0)
+			instance.set("unit_position", stub[stub.size() / 2])
+			instance.set("move_path", [beyond_tunnel])
+			instance.set("move_target", beyond_tunnel)
+			instance.set("selected_route", [beyond_tunnel])
+			instance.set("moving", true)
+			instance.call("_process", 1.0)
+			instance.set("moving", false)
+			await process_frame
+			var transition_image := root.get_texture().get_image()
+			var transition_path := "res://reports/transicio_mapa_tunel.png"
+			var transition_error := transition_image.save_png(transition_path)
+			print("SCREENSHOT %s error=%d size=%s map_mode=%s corridor_visible=%s" % [transition_path, transition_error, transition_image.get_size(), not instance.get("analysis_mode"), instance.call("_should_draw_corridor", corridor)])
+			passage_error = maxi(passage_error, transition_error)
 	quit(0 if error == OK and dev_error == OK and analysis_error == OK and passage_error == OK else 1)
