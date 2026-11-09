@@ -11,6 +11,7 @@ const ANALYSIS_MAX_ZOOM := 7.0
 const PREVIEW_ANALYSIS_ZOOM := 5.5
 const ISO_AXIS_SCALE := 0.70
 const ISO_VERTICAL_RATIO := 0.5
+const CAVE_DETECTION_MARGIN := 80.0
 
 var world: Dictionary
 var seed_value := 134027
@@ -30,12 +31,14 @@ var revealed_mask := PackedByteArray()
 var last_revealed_cell := Vector2i(-1, -1)
 var current_cave_id := -1
 var discovered_exits: Dictionary = {}
+var cave_floor_textures: Dictionary = {}
 var show_graph := true
 var show_contours := true
 var show_route := true
 var show_spawn := true
 var dev_mode := false
 var explored_caves: Dictionary = {}
+var detected_caves: Dictionary = {}
 var dragging := false
 var drag_origin := Vector2.ZERO
 var ui_root: Control
@@ -125,6 +128,7 @@ func _process(delta: float) -> void:
 			_reveal_around(unit_position, 5)
 		_update_current_cave()
 		_discover_exit_near_unit()
+		_detect_caves_near_unit()
 		queue_redraw()
 
 func _draw() -> void:
@@ -197,6 +201,7 @@ func _draw() -> void:
 		for obstacle in world.obstacles:
 			if _is_revealed(obstacle.position) and (not analysis_mode or _point_inside_selected_cave(obstacle.position)):
 				_draw_obstacle(obstacle)
+	_draw_detected_cave_signatures()
 	var unit_screen := _world_to_screen(unit_position)
 	draw_circle(unit_screen, maxf(4.5, 7.0 * zoom_level), ORANGE)
 	draw_arc(unit_screen, maxf(7.0, 11.0 * zoom_level), 0, TAU, 16, Color("ffe2ba"), 1.4)
@@ -219,13 +224,15 @@ func _draw_isometric_room() -> void:
 		var known_contour := PackedVector2Array()
 		for point in contour:
 			known_contour.append(_world_to_screen(cave.position + point))
-		draw_colored_polygon(known_contour, Color("171419"))
+		draw_colored_polygon(known_contour, Color("432e2c"))
 	_draw_isometric_floor(cave, min_cell_x, max_cell_x, min_cell_y, max_cell_y)
 	if room_is_known:
 		# The short passage throat is layered over the floor to seal raster gaps;
 		# the explorer is rendered afterward so it always stays in front.
 		_draw_isometric_corridors(cave)
 		_draw_isometric_contour(cave)
+	elif detected_caves.has(selected_cave):
+		_draw_cave_detection_signature(cave)
 	for obstacle in world.obstacles:
 		if _point_inside_selected_cave(obstacle.position) and _is_revealed(obstacle.position):
 			_draw_isometric_obstacle(obstacle)
@@ -233,10 +240,16 @@ func _draw_isometric_room() -> void:
 		_draw_isometric_explorer(unit_position)
 
 func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int, max_y: int) -> void:
+	if explored_caves.has(cave.id):
+		_draw_textured_cave_floor(cave)
+		_draw_procedural_rock_details(cave)
+		return
 	var terrain: PackedByteArray = world.terrain_mask
 	var revealed: PackedByteArray = revealed_mask
 	var grid_width: int = world.grid_size.x
-	var half_tile: float = world.cell_size * 0.25
+	# Before scanning, show only the actual revealed floor cells. The full room
+	# surface and its decorative rock patches appear after the explicit scan.
+	var half_tile: float = world.cell_size * 0.5
 	for y in range(min_y, max_y + 1):
 		for x in range(min_x, max_x + 1):
 			var index := y * grid_width + x
@@ -245,36 +258,92 @@ func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int,
 			var cell_center := Vector2((float(x) + 0.5) * world.cell_size, (float(y) + 0.5) * world.cell_size)
 			if not Geometry2D.is_point_in_polygon(cell_center - cave.position, cave.contour):
 				continue
-			# Four subtiles per logical cell keep the isometric floor readable
-			# without changing the generator's navigation or reveal resolution.
-			for sub_y in range(2):
-				for sub_x in range(2):
-					var offset := Vector2((float(sub_x) - 0.5) * half_tile * 2.0, (float(sub_y) - 0.5) * half_tile * 2.0)
-					var tile_center := cell_center + offset
-					var corner_offset := Vector2(half_tile, half_tile)
-					var tile_corners := [
-						tile_center + Vector2(-corner_offset.x, -corner_offset.y),
-						tile_center + Vector2(corner_offset.x, -corner_offset.y),
-						tile_center + corner_offset,
-						tile_center + Vector2(-corner_offset.x, corner_offset.y)
-					]
-					var tile_inside := true
-					for corner in tile_corners:
-						if not Geometry2D.is_point_in_polygon(corner - cave.position, cave.contour):
-							tile_inside = false
-							break
-					if not tile_inside:
-						continue
-					var diamond := PackedVector2Array([
-						_world_to_screen(tile_center + Vector2(-half_tile, -half_tile)),
-						_world_to_screen(tile_center + Vector2(half_tile, -half_tile)),
-						_world_to_screen(tile_center + Vector2(half_tile, half_tile)),
-						_world_to_screen(tile_center + Vector2(-half_tile, half_tile))
-					])
-					var variation: int = posmod(x * 13 + y * 7 + sub_x * 3 + sub_y * 5 + seed_value, 5)
-					var floor_color: Color = [Color("4a2b26"), Color("573127"), Color("442829"), Color("4d2b31"), Color("60402d")][variation]
-					draw_colored_polygon(diamond, floor_color)
-					draw_polyline(PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]), Color("774034", 0.32), 0.55, true)
+			var diamond := PackedVector2Array([
+				_world_to_screen(cell_center + Vector2(-half_tile, -half_tile)),
+				_world_to_screen(cell_center + Vector2(half_tile, -half_tile)),
+				_world_to_screen(cell_center + Vector2(half_tile, half_tile)),
+				_world_to_screen(cell_center + Vector2(-half_tile, half_tile))
+			])
+			draw_colored_polygon(diamond, Color("493431", 0.9))
+
+func _draw_textured_cave_floor(cave: Dictionary) -> void:
+	var contour: PackedVector2Array = cave.contour
+	var screen_points := PackedVector2Array()
+	var uvs := PackedVector2Array()
+	var colors := PackedColorArray()
+	var bounds := Rect2(contour[0], Vector2.ZERO)
+	for point in contour:
+		bounds = bounds.expand(point)
+	for point in contour:
+		screen_points.append(_world_to_screen(cave.position + point))
+		uvs.append(Vector2((point.x - bounds.position.x) / maxf(bounds.size.x, 1.0), (point.y - bounds.position.y) / maxf(bounds.size.y, 1.0)))
+		colors.append(Color.WHITE)
+	draw_polygon(screen_points, colors, uvs, _get_cave_floor_texture(cave.id))
+
+func _get_cave_floor_texture(cave_id: int) -> Texture2D:
+	if cave_floor_textures.has(cave_id):
+		return cave_floor_textures[cave_id]
+	var cave_seed: int = int(posmod(seed_value * 48611 + cave_id * 7919 + 24681357, 0x7fffffff))
+	var coarse := FastNoiseLite.new()
+	coarse.seed = cave_seed
+	coarse.frequency = 0.025
+	coarse.fractal_octaves = 4
+	coarse.fractal_gain = 0.58
+	var detail := FastNoiseLite.new()
+	detail.seed = cave_seed ^ 0x5f3759df
+	detail.frequency = 0.12
+	var image := Image.create(256, 256, false, Image.FORMAT_RGBA8)
+	var dark_rock := Color("352528")
+	var warm_rock := Color("68473a")
+	for y in range(256):
+		for x in range(256):
+			var broad_value: float = coarse.get_noise_2d(float(x), float(y))
+			var grain_value: float = detail.get_noise_2d(float(x), float(y))
+			var shade: float = clampf(0.50 + broad_value * 0.34 + grain_value * 0.12, 0.0, 1.0)
+			image.set_pixel(x, y, dark_rock.lerp(warm_rock, shade))
+	var texture := ImageTexture.create_from_image(image)
+	cave_floor_textures[cave_id] = texture
+	return texture
+
+func _draw_procedural_rock_details(cave: Dictionary) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(posmod(seed_value * 92821 + int(cave.id) * 68917 + 314159, 0x7fffffff))
+	var contour: PackedVector2Array = cave.contour
+	var details_drawn := 0
+	var attempts := 0
+	while details_drawn < 34 and attempts < 136:
+		attempts += 1
+		var angle := rng.randf_range(0.0, TAU)
+		var distance := sqrt(rng.randf()) * float(cave.radius) * 0.82
+		var center: Vector2 = cave.position + Vector2(cos(angle), sin(angle)) * distance
+		if not Geometry2D.is_point_in_polygon(center - cave.position, contour):
+			continue
+		var radius_x := rng.randf_range(2.8, 8.0)
+		var radius_y := radius_x * rng.randf_range(0.48, 0.78)
+		if _distance_to_cave_boundary(center, cave) < radius_x * 1.5:
+			continue
+		var rotation := rng.randf_range(0.0, TAU)
+		var sides := rng.randi_range(7, 10)
+		var rock := PackedVector2Array()
+		var rock_is_inside := true
+		for side in range(sides):
+			var vertex_angle := TAU * float(side) / float(sides) + rotation
+			var roughness := rng.randf_range(0.84, 1.12)
+			var point := center + Vector2(cos(vertex_angle) * radius_x * roughness, sin(vertex_angle) * radius_y * roughness)
+			if not Geometry2D.is_point_in_polygon(point - cave.position, contour):
+				rock_is_inside = false
+			rock.append(_world_to_screen(point))
+		if not rock_is_inside:
+			continue
+		var color_index := rng.randi_range(0, 3)
+		var rock_color: Color = [Color("5b4039"), Color("4a3436"), Color("60463b"), Color("3c3033")][color_index]
+		var shadow := PackedVector2Array()
+		for point in rock:
+			shadow.append(point + Vector2(0.0, maxf(1.0, zoom_level * 0.12)))
+		draw_colored_polygon(shadow, Color("241e22", 0.42))
+		draw_colored_polygon(rock, rock_color)
+		draw_line(rock[0], rock[1], Color("8a6652", 0.24), maxf(0.7, zoom_level * 0.1), true)
+		details_drawn += 1
 
 func _draw_isometric_walls(cave: Dictionary) -> void:
 	var contour: PackedVector2Array = cave.contour
@@ -286,7 +355,7 @@ func _draw_isometric_walls(cave: Dictionary) -> void:
 	for point in screen_points:
 		center_y += point.y
 	center_y /= float(screen_points.size())
-	var wall_height := 12.0 + zoom_level * 3.2
+	var wall_height := 8.0 + zoom_level * 1.5
 	for i in range(contour.size()):
 		var a: Vector2 = cave.position + contour[i]
 		var b: Vector2 = cave.position + contour[(i + 1) % contour.size()]
@@ -316,9 +385,9 @@ func _draw_isometric_walls(cave: Dictionary) -> void:
 			var finish := _world_to_screen(a.lerp(b, edge_range.y))
 			var wall_direction := 1.0 if (start.y + finish.y) * 0.5 >= center_y else -1.0
 			var wall_offset := Vector2(0, wall_height * wall_direction)
-			draw_colored_polygon(PackedVector2Array([start, finish, finish + wall_offset, start + wall_offset]), Color("281c20") if finish.x >= start.x else Color("352026"))
-			draw_line(start, start + wall_offset, Color("884735"), 1.0, true)
-			draw_line(finish, finish + wall_offset, Color("170f15"), 1.0, true)
+			draw_colored_polygon(PackedVector2Array([start, finish, finish + wall_offset, start + wall_offset]), Color("2e2224") if finish.x >= start.x else Color("37272a"))
+			draw_line(start, start + wall_offset, Color("765044"), 0.9, true)
+			draw_line(finish, finish + wall_offset, Color("21191d"), 0.9, true)
 
 func _draw_isometric_contour(cave: Dictionary) -> void:
 	var contour: PackedVector2Array = cave.contour
@@ -342,10 +411,10 @@ func _draw_isometric_contour(cave: Dictionary) -> void:
 		var cursor := 0.0
 		for cut in cuts:
 			if cut.x > cursor:
-				draw_line(_world_to_screen(a.lerp(b, cursor)), _world_to_screen(a.lerp(b, cut.x)), Color("b75b37"), maxf(1.5, zoom_level * 0.55), true)
+				draw_line(_world_to_screen(a.lerp(b, cursor)), _world_to_screen(a.lerp(b, cut.x)), Color("805043"), maxf(1.2, zoom_level * 0.3), true)
 			cursor = maxf(cursor, cut.y)
 		if cursor < 1.0:
-			draw_line(_world_to_screen(a.lerp(b, cursor)), _world_to_screen(b), Color("b75b37"), maxf(1.5, zoom_level * 0.55), true)
+			draw_line(_world_to_screen(a.lerp(b, cursor)), _world_to_screen(b), Color("805043"), maxf(1.2, zoom_level * 0.3), true)
 
 func _draw_isometric_corridors(cave: Dictionary) -> void:
 	# Render a discovered exit as the actual passage leaving the room, not as a
@@ -387,7 +456,7 @@ func _isometric_exit_stub(exit_info: Dictionary, corridor: Dictionary, cave: Dic
 	if is_zero_approx(bend_side):
 		bend_side = 1.0 if posmod(int(corridor.id), 2) == 0 else -1.0
 	var side := outward.orthogonal() * bend_side
-	var length: float = clampf(float(cave.radius) * 0.30, 26.0, 40.0)
+	var length: float = clampf(float(cave.radius) * 0.22, 18.0, 28.0)
 	var bend: float = clampf(float(corridor.width) * 0.14, 3.0, 7.0)
 	var start: Vector2 = exit_info.position
 	var control_a := start + outward * length * 0.34
@@ -438,29 +507,24 @@ func _draw_isometric_corridor_mesh(centerline: PackedVector2Array, width: float)
 		right_edge.append(centerline[index] - normal)
 	if left_edge.size() < 2:
 		return
-	var vertical_height := clampf(width * zoom_level * 0.36, 5.0, 24.0)
-	# Raised tunnel walls first, then the walkable floor over their lower edges.
-	for index in range(left_edge.size() - 1):
-		var left_a := _world_to_screen(left_edge[index])
-		var left_b := _world_to_screen(left_edge[index + 1])
-		var right_a := _world_to_screen(right_edge[index])
-		var right_b := _world_to_screen(right_edge[index + 1])
-		draw_colored_polygon(PackedVector2Array([left_a, left_b, left_b - Vector2(0, vertical_height), left_a - Vector2(0, vertical_height)]), Color("392126"))
-		draw_colored_polygon(PackedVector2Array([right_a, right_b, right_b - Vector2(0, vertical_height), right_a - Vector2(0, vertical_height)]), Color("241a20"))
+	var vertical_height := clampf(width * zoom_level * 0.12, 2.0, 9.0)
+	# In the close room view, raised tunnel walls formed bulky panels that
+	# obscured the doorway. Keep the throat readable as a connected floor with
+	# low, narrow rims; room walls already define the opening.
 	var floor_shape := PackedVector2Array()
 	for point in left_edge:
 		floor_shape.append(_world_to_screen(point))
 	for index in range(right_edge.size() - 1, -1, -1):
 		floor_shape.append(_world_to_screen(right_edge[index]))
-	draw_colored_polygon(floor_shape, Color("4a2927"))
+	draw_colored_polygon(floor_shape, Color("4b302d"))
 	var left_rim := PackedVector2Array()
 	var right_rim := PackedVector2Array()
 	for point in left_edge:
-		left_rim.append(_world_to_screen(point) - Vector2(0, vertical_height))
+		left_rim.append(_world_to_screen(point) - Vector2(0, vertical_height * 0.45))
 	for point in right_edge:
-		right_rim.append(_world_to_screen(point) - Vector2(0, vertical_height))
-	draw_polyline(left_rim, Color("b45c3d"), maxf(1.0, zoom_level * 0.22), true)
-	draw_polyline(right_rim, Color("744136"), maxf(1.0, zoom_level * 0.18), true)
+		right_rim.append(_world_to_screen(point) - Vector2(0, vertical_height * 0.45))
+	draw_polyline(left_rim, Color("805044"), maxf(0.8, zoom_level * 0.14), true)
+	draw_polyline(right_rim, Color("68443c"), maxf(0.8, zoom_level * 0.12), true)
 
 func _draw_isometric_obstacle(obstacle: Dictionary) -> void:
 	var radius: float = obstacle.radius
@@ -639,7 +703,9 @@ func _new_world(value: int) -> void:
 	chained_cave_id = -1
 	current_cave_id = world.entry
 	discovered_exits.clear()
+	cave_floor_textures.clear()
 	explored_caves.clear()
+	detected_caves.clear()
 	explored_caves[world.entry] = true
 	revealed_mask.resize(world.terrain_mask.size())
 	revealed_mask.fill(0)
@@ -652,6 +718,7 @@ func _new_world(value: int) -> void:
 	_update_scan_availability()
 	_update_view_mode_ui()
 	camera_offset = -(unit_position - Generator.WORLD_RECT.size * 0.5) * zoom_level
+	_detect_caves_near_unit()
 	queue_redraw()
 
 func _on_overlay_toggled(value: bool, overlay: String) -> void:
@@ -730,6 +797,11 @@ func _select_cave(screen_position: Vector2) -> void:
 		if _should_draw_cave(cave.id):
 			candidate_focus = cave.position
 			candidate_distance = candidate_focus.distance_to(point)
+		elif detected_caves.has(cave.id):
+			candidate_focus = cave.position
+			candidate_distance = candidate_focus.distance_to(point)
+			if candidate_distance > maxf(22.0 / zoom_level, 18.0):
+				continue
 		else:
 			candidate_focus = _nearest_visible_preview_cell(cave.id, point)
 			if candidate_focus.x < 0.0:
@@ -805,7 +877,7 @@ func _update_view_mode_ui() -> void:
 		new_game_button.visible = false
 		map_return_button.visible = true
 		if not explored_caves.has(selected_cave):
-			status_label.text = "FRAGMENT VISIBLE · SALA NO ESCANEJADA"
+			status_label.text = "SENYAL DE COVA · EXPLORACIÓ PENDENT" if detected_caves.has(selected_cave) else "FRAGMENT VISIBLE · SALA NO ESCANEJADA"
 		elif selected_cave == current_cave_id:
 			status_label.text = "SALA ACTUAL · ESCÀNER DISPONIBLE"
 		else:
@@ -1136,6 +1208,56 @@ func _update_current_cave() -> void:
 				_update_map_stats()
 				_update_scan_availability()
 			return
+
+func _detect_caves_near_unit() -> void:
+	if world.is_empty():
+		return
+	var newly_detected := false
+	for cave in world.caves:
+		if explored_caves.has(cave.id) or detected_caves.has(cave.id):
+			continue
+		var unit_inside_cave: bool = Geometry2D.is_point_in_polygon(unit_position - cave.position, cave.contour)
+		if not unit_inside_cave and _distance_to_cave_boundary(unit_position, cave) > CAVE_DETECTION_MARGIN:
+			continue
+		detected_caves[cave.id] = true
+		newly_detected = true
+	if newly_detected:
+		if is_instance_valid(status_label):
+			status_label.text = "SENYAL DE COVA DETECTADA · APROPA'T PER EXPLORAR"
+		queue_redraw()
+
+func _distance_to_cave_boundary(point: Vector2, cave: Dictionary) -> float:
+	var nearest_distance := INF
+	var contour: PackedVector2Array = cave.contour
+	for index in range(contour.size()):
+		var start: Vector2 = cave.position + contour[index]
+		var finish: Vector2 = cave.position + contour[(index + 1) % contour.size()]
+		var closest := Geometry2D.get_closest_point_to_segment(point, start, finish)
+		nearest_distance = minf(nearest_distance, point.distance_to(closest))
+	return nearest_distance
+
+func _draw_detected_cave_signatures() -> void:
+	for cave_id in detected_caves:
+		if _should_draw_cave(cave_id):
+			continue
+		_draw_cave_detection_signature(world.caves[cave_id])
+
+func _draw_cave_detection_signature(cave: Dictionary) -> void:
+	var center := _world_to_screen(cave.position)
+	var radius: float = float(cave.radius) * zoom_level * 0.78
+	var radius_y: float = radius
+	if analysis_mode:
+		radius *= sqrt(2.0) * ISO_AXIS_SCALE
+		radius_y = radius * ISO_VERTICAL_RATIO
+	var tint := Color(CYAN, 0.42)
+	for segment in range(8):
+		var start_angle := TAU * float(segment) / 8.0 + 0.08
+		var end_angle := start_angle + TAU / 8.0 * 0.48
+		var start := center + Vector2(cos(start_angle) * radius, sin(start_angle) * radius_y)
+		var finish := center + Vector2(cos(end_angle) * radius, sin(end_angle) * radius_y)
+		draw_line(start, finish, tint, maxf(1.3, zoom_level * 0.3), true)
+	draw_circle(center, maxf(3.0, zoom_level * 0.55), Color("8df7ef"))
+	draw_arc(center, maxf(8.0, zoom_level * 2.2), 0.0, TAU, 20, Color(CYAN, 0.7), maxf(1.2, zoom_level * 0.25), true)
 
 func _discover_exit_near_unit() -> void:
 	if current_cave_id < 0 or current_cave_id >= world.caves.size():

@@ -17,6 +17,23 @@ func _capture() -> void:
 	var path := "res://reports/prototip_screenshot.png"
 	var error := image.save_png(path)
 	print("SCREENSHOT %s error=%d size=%s" % [path, error, image.get_size()])
+	var map_world: Dictionary = instance.get("world")
+	var detected_cave_id: int = (int(map_world.entry) + 1) % map_world.caves.size()
+	var detected_cave: Dictionary = map_world.caves[detected_cave_id]
+	var approach_position: Vector2 = detected_cave.position + detected_cave.contour[0] + Vector2(60.0, 0.0)
+	instance.set("moving", false)
+	instance.set("analysis_mode", false)
+	instance.set("selected_cave", -1)
+	instance.set("unit_position", approach_position)
+	instance.call("_reveal_around", approach_position, 5)
+	instance.call("_detect_caves_near_unit")
+	instance.set("camera_offset", -((approach_position - Vector2(1100.0, 750.0)) * float(instance.get("zoom_level"))))
+	instance.queue_redraw()
+	await process_frame
+	var detection_image := root.get_texture().get_image()
+	var detection_path := "res://reports/deteccio_cova_proximitat.png"
+	var detection_error := detection_image.save_png(detection_path)
+	print("SCREENSHOT %s error=%d detected=%s" % [detection_path, detection_error, instance.get("detected_caves").has(detected_cave_id)])
 	var dev_toggle := instance.get("dev_toggle") as CheckButton
 	dev_toggle.button_pressed = true
 	instance.call("_on_dev_mode_toggled", true)
@@ -86,4 +103,4 @@ func _capture() -> void:
 			var transition_error := transition_image.save_png(transition_path)
 			print("SCREENSHOT %s error=%d size=%s map_mode=%s corridor_visible=%s" % [transition_path, transition_error, transition_image.get_size(), not instance.get("analysis_mode"), instance.call("_should_draw_corridor", corridor)])
 			passage_error = maxi(passage_error, transition_error)
-	quit(0 if error == OK and dev_error == OK and analysis_error == OK and passage_error == OK else 1)
+	quit(0 if error == OK and detection_error == OK and dev_error == OK and analysis_error == OK and passage_error == OK else 1)

@@ -41,7 +41,10 @@ func _initialize() -> void:
 	var room_boundary_ok := _analysis_blocks_exit_without_perspective_change(Generator.generate(134027))
 	if not room_boundary_ok:
 		failures.append("inspection should block crossing the room boundary until the player switches to the map")
-	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "inspection_room_boundary_valid": room_boundary_ok, "results": rows, "failures": failures}
+	var cave_detection_ok := _caves_detected_by_proximity(Generator.generate(134027))
+	if not cave_detection_ok:
+		failures.append("approaching an unexplored cave should show a selectable sensor signature without revealing its contour")
+	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "inspection_room_boundary_valid": room_boundary_ok, "cave_proximity_detection_valid": cave_detection_ok, "results": rows, "failures": failures}
 	DirAccess.make_dir_recursive_absolute("res://reports")
 	var file := FileAccess.open("res://reports/seed_validation_50.json", FileAccess.WRITE)
 	if file:
@@ -114,6 +117,32 @@ func _analysis_blocks_exit_without_perspective_change(world: Dictionary) -> bool
 	navigation_probe.set("moving", false)
 	navigation_probe.set("move_path", [])
 	return can_move_inside_room and blocked_at_room_boundary and returned_to_map and corridor_visible_on_map and overview_zoom_keeps_tunnel_readable and can_leave_after_switching
+
+func _caves_detected_by_proximity(world: Dictionary) -> bool:
+	navigation_probe.set("world", world)
+	navigation_probe.set("dev_mode", false)
+	navigation_probe.set("analysis_mode", false)
+	navigation_probe.set("selected_cave", -1)
+	navigation_probe.set("current_cave_id", world.entry)
+	navigation_probe.set("explored_caves", {world.entry: true})
+	navigation_probe.set("detected_caves", {})
+	var target_id: int = (world.entry + 1) % world.caves.size()
+	var cave: Dictionary = world.caves[target_id]
+	navigation_probe.set("unit_position", cave.position + cave.contour[0] + Vector2(60.0, 0.0))
+	navigation_probe.call("_detect_caves_near_unit")
+	var detected_before_scan: bool = navigation_probe.get("detected_caves").has(target_id) and not navigation_probe.get("explored_caves").has(target_id) and not navigation_probe.call("_should_draw_cave", target_id)
+	if not detected_before_scan:
+		return false
+	var marker_screen: Vector2 = navigation_probe.call("_world_to_screen", cave.position)
+	navigation_probe.call("_select_cave", marker_screen)
+	var marker_selects_preview: bool = bool(navigation_probe.get("analysis_mode")) and int(navigation_probe.get("selected_cave")) == target_id and not navigation_probe.get("explored_caves").has(target_id)
+	navigation_probe.set("analysis_mode", false)
+	navigation_probe.set("selected_cave", -1)
+	navigation_probe.set("detected_caves", {})
+	navigation_probe.set("unit_position", cave.position + Vector2(float(cave.radius) + 800.0, 0.0))
+	navigation_probe.call("_detect_caves_near_unit")
+	var not_detected_from_far_away: bool = not navigation_probe.get("detected_caves").has(target_id)
+	return detected_before_scan and marker_selects_preview and not_detected_from_far_away
 
 func _canonical(world: Dictionary) -> String:
 	var result: Array = []

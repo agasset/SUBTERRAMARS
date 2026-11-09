@@ -1,4 +1,5 @@
 {
+	"cave_proximity_detection_valid": true,
 	"failures": [],
 	"generator_version": "p0b-2",
 	"inspection_room_boundary_valid": true,
