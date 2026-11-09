@@ -33,10 +33,11 @@ func _initialize() -> void:
 		var scanner_selection_ok := _scanner_requires_selection_without_camera_change(first)
 		var reveal_ok := _revelation_and_camera_valid(first)
 		var isometric_mapping_ok := _isometric_projection_round_trip(first)
+		var exit_returns_to_map_ok := _analysis_returns_to_map_on_exit(first)
 		var spawn_ok: bool = first.entry >= 0 and first.entry < first.caves.size()
-		var row := {"seed": seed_value, "caves": first.caves.size(), "corridors": first.corridors.size(), "obstacles": first.obstacles.size(), "corridor_geometry_varied": corridor_geometry_ok, "walkable_connected": connected, "cave_spawns_walkable": cave_spawns_ok, "pathfinding_valid": path_ok, "obstacles_blocked": obstacle_ok, "line_of_sight_blocked": visibility_ok, "scanner_current_cave_only": scanner_scope_ok, "exit_proximity_discovery_valid": exit_proximity_ok, "exit_traversal_valid": exit_traversal_ok, "player_map_hides_unexplored": player_map_ok, "scanner_selection_camera_valid": scanner_selection_ok, "reveal_and_camera_valid": reveal_ok, "isometric_mapping_round_trip": isometric_mapping_ok, "spawn_valid": spawn_ok, "deterministic": same, "canonical_hash": hash(canonical_first), "fallback": first.fallback}
+		var row := {"seed": seed_value, "caves": first.caves.size(), "corridors": first.corridors.size(), "obstacles": first.obstacles.size(), "corridor_geometry_varied": corridor_geometry_ok, "walkable_connected": connected, "cave_spawns_walkable": cave_spawns_ok, "pathfinding_valid": path_ok, "obstacles_blocked": obstacle_ok, "line_of_sight_blocked": visibility_ok, "scanner_current_cave_only": scanner_scope_ok, "exit_proximity_discovery_valid": exit_proximity_ok, "exit_traversal_valid": exit_traversal_ok, "player_map_hides_unexplored": player_map_ok, "scanner_selection_camera_valid": scanner_selection_ok, "reveal_and_camera_valid": reveal_ok, "isometric_mapping_round_trip": isometric_mapping_ok, "exiting_room_returns_to_map": exit_returns_to_map_ok, "spawn_valid": spawn_ok, "deterministic": same, "canonical_hash": hash(canonical_first), "fallback": first.fallback}
 		rows.append(row)
-		if not (same and count_ok and corridor_geometry_ok and connected and cave_spawns_ok and path_ok and obstacle_ok and visibility_ok and scanner_scope_ok and exit_proximity_ok and exit_traversal_ok and player_map_ok and scanner_selection_ok and reveal_ok and isometric_mapping_ok and spawn_ok):
+		if not (same and count_ok and corridor_geometry_ok and connected and cave_spawns_ok and path_ok and obstacle_ok and visibility_ok and scanner_scope_ok and exit_proximity_ok and exit_traversal_ok and player_map_ok and scanner_selection_ok and reveal_ok and isometric_mapping_ok and exit_returns_to_map_ok and spawn_ok):
 			failures.append("seed %d: %s" % [seed_value, JSON.stringify(row)])
 	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "results": rows, "failures": failures}
 	DirAccess.make_dir_recursive_absolute("res://reports")
@@ -48,6 +49,37 @@ func _initialize() -> void:
 	for failure in failures:
 		push_error(failure)
 	quit(0 if failures.is_empty() else 1)
+
+func _analysis_returns_to_map_on_exit(world: Dictionary) -> bool:
+	navigation_probe.set("world", world)
+	var cave_id: int = world.entry
+	var cave: Dictionary = world.caves[cave_id]
+	var selected_corridor: Dictionary = {}
+	for corridor in world.corridors:
+		if corridor.a == cave_id or corridor.b == cave_id:
+			selected_corridor = corridor
+			break
+	if selected_corridor.is_empty():
+		return false
+	var exit_position: Vector2 = selected_corridor.exit_a if selected_corridor.a == cave_id else selected_corridor.exit_b
+	var exit_direction: Vector2 = selected_corridor.direction_a if selected_corridor.a == cave_id else selected_corridor.direction_b
+	var start_position := exit_position - exit_direction * 5.0
+	var target_position := exit_position + exit_direction * 12.0
+	var path: Array[Vector2] = [target_position]
+	navigation_probe.set("selected_cave", cave_id)
+	navigation_probe.set("current_cave_id", cave_id)
+	navigation_probe.set("analysis_mode", true)
+	navigation_probe.set("zoom_level", 5.0)
+	navigation_probe.set("unit_position", start_position)
+	navigation_probe.set("move_path", path)
+	navigation_probe.set("selected_route", path.duplicate())
+	navigation_probe.set("move_target", target_position)
+	navigation_probe.set("moving", true)
+	navigation_probe.call("_process", 1.0)
+	var returned_to_map: bool = not navigation_probe.get("analysis_mode") and int(navigation_probe.get("selected_cave")) == -1
+	navigation_probe.set("moving", false)
+	navigation_probe.set("move_path", [])
+	return returned_to_map
 
 func _canonical(world: Dictionary) -> String:
 	var result: Array = []

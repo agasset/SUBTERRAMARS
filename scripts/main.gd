@@ -74,6 +74,7 @@ func _process(delta: float) -> void:
 				remaining_distance = 0.0
 		if move_path.is_empty():
 			unit_position = move_target
+			_return_to_map_if_player_left_selected_cave()
 			_update_current_cave()
 			moving = false
 			selected_route.clear()
@@ -88,6 +89,7 @@ func _process(delta: float) -> void:
 		var current_cell := Vector2i(floori(unit_position.x / world.cell_size), floori(unit_position.y / world.cell_size))
 		if current_cell != last_revealed_cell:
 			_reveal_around(unit_position, 5)
+		_return_to_map_if_player_left_selected_cave()
 		_update_current_cave()
 		_discover_exit_near_unit()
 		queue_redraw()
@@ -785,6 +787,12 @@ func _return_to_map() -> void:
 	_update_scan_availability()
 	_update_view_mode_ui()
 	queue_redraw()
+
+func _return_to_map_if_player_left_selected_cave() -> void:
+	if not analysis_mode or selected_cave < 0 or selected_cave != current_cave_id:
+		return
+	if not _point_inside_selected_cave(unit_position):
+		_return_to_map()
 
 func _nearest_visible_preview_cell(cave_id: int, point: Vector2) -> Vector2:
 	var cave: Dictionary = world.caves[cave_id]
