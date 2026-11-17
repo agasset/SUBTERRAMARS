@@ -208,7 +208,8 @@ func _draw_isometric_room() -> void:
 		return
 	var cave: Dictionary = world.caves[selected_cave]
 	var contour: PackedVector2Array = cave.contour
-	var room_is_known: bool = explored_caves.has(selected_cave)
+	var room_is_scanned: bool = explored_caves.has(selected_cave)
+	var room_edges_visible: bool = room_is_scanned or _room_reveal_ratio(cave) >= 0.75
 	var local_bounds := Rect2(contour[0], Vector2.ZERO)
 	for point in contour:
 		local_bounds = local_bounds.expand(point)
@@ -216,7 +217,7 @@ func _draw_isometric_room() -> void:
 	var max_cell_x := mini(world.grid_size.x - 1, ceili((cave.position.x + local_bounds.end.x) / world.cell_size))
 	var min_cell_y := maxi(0, floori((cave.position.y + local_bounds.position.y) / world.cell_size))
 	var max_cell_y := mini(world.grid_size.y - 1, ceili((cave.position.y + local_bounds.end.y) / world.cell_size))
-	if room_is_known:
+	if room_is_scanned:
 		var known_contour := PackedVector2Array()
 		for point in contour:
 			known_contour.append(_world_to_screen(cave.position + point))
@@ -226,16 +227,39 @@ func _draw_isometric_room() -> void:
 	# clips both textures and decoration to what the explorer has seen.
 	_draw_isometric_corridors(cave)
 	_draw_procedural_rock_details(cave)
-	if room_is_known:
+	if room_is_scanned:
 		_draw_isometric_walls(cave)
+	if room_edges_visible:
 		_draw_isometric_contour(cave)
-	elif detected_caves.has(selected_cave) and selected_cave != current_cave_id:
-		_draw_cave_detection_signature(cave)
 	for obstacle in world.obstacles:
-		if _point_inside_selected_cave(obstacle.position) and (room_is_known or _is_revealed(obstacle.position)):
+		if _point_inside_selected_cave(obstacle.position) and (room_is_scanned or _is_revealed(obstacle.position)):
 			_draw_isometric_obstacle(obstacle)
 	if _point_inside_selected_cave(unit_position) or _point_inside_isometric_exit(unit_position, cave) or _point_inside_connected_corridor(unit_position, cave):
 		_draw_isometric_explorer(unit_position)
+
+func _room_reveal_ratio(cave: Dictionary) -> float:
+	var contour: PackedVector2Array = cave.contour
+	if contour.is_empty():
+		return 0.0
+	var bounds := Rect2(contour[0] + cave.position, Vector2.ZERO)
+	for point in contour:
+		bounds = bounds.expand(point + cave.position)
+	var min_x := maxi(0, floori(bounds.position.x / world.cell_size))
+	var max_x := mini(world.grid_size.x - 1, ceili(bounds.end.x / world.cell_size))
+	var min_y := maxi(0, floori(bounds.position.y / world.cell_size))
+	var max_y := mini(world.grid_size.y - 1, ceili(bounds.end.y / world.cell_size))
+	var total := 0
+	var visible := 0
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			var index: int = y * world.grid_size.x + x
+			var center := Vector2((float(x) + 0.5) * world.cell_size, (float(y) + 0.5) * world.cell_size)
+			if world.terrain_mask[index] == 0 or not Geometry2D.is_point_in_polygon(center - cave.position, contour):
+				continue
+			total += 1
+			if revealed_mask[index] == 1:
+				visible += 1
+	return float(visible) / float(maxi(1, total))
 
 func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int, max_y: int) -> void:
 	if explored_caves.has(cave.id):
@@ -325,16 +349,14 @@ func _draw_procedural_rock_details(cave: Dictionary) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(posmod(seed_value * 92821 + int(cave.id) * 68917 + 314159, 0x7fffffff))
 	var contour: PackedVector2Array = cave.contour
-	var details_drawn := 0
+	var details_created := 0
 	var attempts := 0
-	while details_drawn < 34 and attempts < 136:
+	while details_created < 34 and attempts < 136:
 		attempts += 1
 		var angle := rng.randf_range(0.0, TAU)
 		var distance := sqrt(rng.randf()) * float(cave.radius) * 0.82
 		var center: Vector2 = cave.position + Vector2(cos(angle), sin(angle)) * distance
 		if not Geometry2D.is_point_in_polygon(center - cave.position, contour):
-			continue
-		if not explored_caves.has(cave.id) and not _is_revealed(center):
 			continue
 		var radius_x := rng.randf_range(2.8, 8.0)
 		var radius_y := radius_x * rng.randf_range(0.48, 0.78)
@@ -344,16 +366,24 @@ func _draw_procedural_rock_details(cave: Dictionary) -> void:
 		var sides := rng.randi_range(7, 10)
 		var rock := PackedVector2Array()
 		var rock_is_inside := true
+		var rock_is_revealed := _is_revealed(center)
 		for side in range(sides):
 			var vertex_angle := TAU * float(side) / float(sides) + rotation
 			var roughness := rng.randf_range(0.84, 1.12)
 			var point := center + Vector2(cos(vertex_angle) * radius_x * roughness, sin(vertex_angle) * radius_y * roughness)
-			if not Geometry2D.is_point_in_polygon(point - cave.position, contour) or (not explored_caves.has(cave.id) and not _is_revealed(point)):
+			if not Geometry2D.is_point_in_polygon(point - cave.position, contour):
 				rock_is_inside = false
+			if not _is_revealed(point):
+				rock_is_revealed = false
 			rock.append(_world_to_screen(point))
 		if not rock_is_inside:
 			continue
 		var color_index := rng.randi_range(0, 3)
+		details_created += 1
+		# Keep the procedural layout independent of discovery: fog only controls
+		# visibility, never which rocks get generated or where later rocks land.
+		if not explored_caves.has(cave.id) and not rock_is_revealed:
+			continue
 		var rock_color: Color = [Color("5b4039"), Color("4a3436"), Color("60463b"), Color("3c3033")][color_index]
 		var shadow := PackedVector2Array()
 		for point in rock:
@@ -361,7 +391,6 @@ func _draw_procedural_rock_details(cave: Dictionary) -> void:
 		draw_colored_polygon(shadow, Color("241e22", 0.42))
 		draw_colored_polygon(rock, rock_color)
 		draw_line(rock[0], rock[1], Color("8a6652", 0.24), maxf(0.7, zoom_level * 0.1), true)
-		details_drawn += 1
 
 func _draw_isometric_walls(cave: Dictionary) -> void:
 	var contour: PackedVector2Array = cave.contour
