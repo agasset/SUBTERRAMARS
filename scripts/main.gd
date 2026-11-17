@@ -222,12 +222,11 @@ func _draw_isometric_room() -> void:
 			known_contour.append(_world_to_screen(cave.position + point))
 		draw_colored_polygon(known_contour, Color("432e2c"))
 	_draw_isometric_floor(cave, min_cell_x, max_cell_x, min_cell_y, max_cell_y)
+	# Use the same ground materials in discovered patches, while the fog mask
+	# clips both textures and decoration to what the explorer has seen.
+	_draw_isometric_corridors(cave)
+	_draw_procedural_rock_details(cave)
 	if room_is_known:
-		# Draw the gallery floors over the cave floor with matching world UVs.
-		# Rocks follow so they remain above both coplanar surfaces.
-		_draw_isometric_corridors(cave)
-		if room_is_known:
-			_draw_procedural_rock_details(cave)
 		_draw_isometric_walls(cave)
 		_draw_isometric_contour(cave)
 	elif detected_caves.has(selected_cave):
@@ -245,9 +244,12 @@ func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int,
 	var terrain: PackedByteArray = world.terrain_mask
 	var revealed: PackedByteArray = revealed_mask
 	var grid_width: int = world.grid_size.x
-	# Before scanning, show only the actual revealed floor cells. The full room
-	# surface and its decorative rock patches appear after the explicit scan.
+	# Keep the scan fog, but use the same world-anchored floor material as the
+	# fully scanned room so visible cells read as part of one continuous surface.
 	var half_tile: float = world.cell_size * 0.5
+	var texture := _get_cave_floor_texture(cave.id)
+	var previous_repeat := texture_repeat
+	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	for y in range(min_y, max_y + 1):
 		for x in range(min_x, max_x + 1):
 			var index := y * grid_width + x
@@ -256,13 +258,19 @@ func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int,
 			var cell_center := Vector2((float(x) + 0.5) * world.cell_size, (float(y) + 0.5) * world.cell_size)
 			if not Geometry2D.is_point_in_polygon(cell_center - cave.position, cave.contour):
 				continue
-			var diamond := PackedVector2Array([
-				_world_to_screen(cell_center + Vector2(-half_tile, -half_tile)),
-				_world_to_screen(cell_center + Vector2(half_tile, -half_tile)),
-				_world_to_screen(cell_center + Vector2(half_tile, half_tile)),
-				_world_to_screen(cell_center + Vector2(-half_tile, half_tile))
+			var world_points := PackedVector2Array([
+				cell_center + Vector2(-half_tile, -half_tile),
+				cell_center + Vector2(half_tile, -half_tile),
+				cell_center + Vector2(half_tile, half_tile),
+				cell_center + Vector2(-half_tile, half_tile)
 			])
-			draw_colored_polygon(diamond, Color("493431", 0.9))
+			var screen_points := PackedVector2Array()
+			var uvs := PackedVector2Array()
+			for world_point in world_points:
+				screen_points.append(_world_to_screen(world_point))
+				uvs.append(world_point / 256.0)
+			draw_polygon(screen_points, PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE]), uvs, texture)
+	texture_repeat = previous_repeat
 
 func _draw_textured_cave_floor(cave: Dictionary) -> void:
 	var contour: PackedVector2Array = cave.contour
@@ -315,6 +323,8 @@ func _draw_procedural_rock_details(cave: Dictionary) -> void:
 		var distance := sqrt(rng.randf()) * float(cave.radius) * 0.82
 		var center: Vector2 = cave.position + Vector2(cos(angle), sin(angle)) * distance
 		if not Geometry2D.is_point_in_polygon(center - cave.position, contour):
+			continue
+		if not explored_caves.has(cave.id) and not _is_revealed(center):
 			continue
 		var radius_x := rng.randf_range(2.8, 8.0)
 		var radius_y := radius_x * rng.randf_range(0.48, 0.78)
