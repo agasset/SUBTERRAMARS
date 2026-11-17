@@ -224,3 +224,7 @@ El món no assigna una coordenada Z a les cambres: les plantes de sala i galeria
 ## Galeries integrades al paviment de la sala
 
 Correcció d'abast: l'ajust anterior de l'alçada de les parets de la sala no tractava el que demanava Albert. S'ha restaurat el dibuix anterior de les parets i s'ha canviat només el renderer de galeries: ara dibuixa l'extensió de la galeria com a part del mateix paviment texturat i projectat que la sala, sense traçar vores pròpies que semblaven graons o rampes. La geometria, ruta i amplada continuen venint del corredor procedural, en les mateixes coordenades 2D del món; no s'han aplanat les direccions del mapa ni s'han canviat graf, màscara o navegació. Verificació: importació/càrrega headless amb Godot 4.6.2, bateria `seed_validation.gd` 51/51 i `git diff --check` correctes. Limitació: no s'ha fet captura visual interactiva després del canvi; cal revisar en execució que la galeria es llegeixi com a continuació del terra.
+
+## Galeries amb paviment visible
+
+La revisió va mostrar que la unió booleana del contorn de sala i el corredor podia deixar el paviment de les galeries sense textura. Ara es dibuixa primer el terra complet de la sala explorada i cada galeria es pinta com una franja triangulada separada, coplanària i amb UV del món perquè la textura continuï a través de la boca. Verificació: Godot 4.6.2 importa i executa la captura OpenGL reports/sortida_isometrica.png. La galeria hi apareix pintada. Bateria de llavors: 51/51 aprovada; git diff --check net.

@@ -243,8 +243,7 @@ func _draw_isometric_room() -> void:
 
 func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int, max_y: int) -> void:
 	if explored_caves.has(cave.id):
-		if _visible_exits_for_cave(cave.id).is_empty():
-			_draw_textured_cave_floor(cave)
+		_draw_textured_cave_floor(cave)
 		return
 	var terrain: PackedByteArray = world.terrain_mask
 	var revealed: PackedByteArray = revealed_mask
@@ -420,11 +419,8 @@ func _draw_isometric_contour(cave: Dictionary) -> void:
 			draw_line(_world_to_screen(a.lerp(b, cursor)), _world_to_screen(b), Color("805043"), maxf(1.2, zoom_level * 0.3), true)
 
 func _draw_isometric_corridors(cave: Dictionary) -> void:
-	# Extend the cave footprint through known exits and draw it as one continuous
-	# floor surface. Gallery rims would make this same-level floor read as a ramp.
-	var combined_shapes: Array[PackedVector2Array] = [PackedVector2Array()]
-	for point in cave.contour:
-		combined_shapes[0].append(cave.position + point)
+	# Draw each gallery as a coplanar textured floor strip. The same world-space
+	# UVs as the room make the overlapping mouth blend without polygon booleans.
 	for exit_info in _visible_exits_for_cave(cave.id):
 		var corridor: Dictionary = {}
 		for candidate in world.corridors:
@@ -438,33 +434,25 @@ func _draw_isometric_corridors(cave: Dictionary) -> void:
 			var edges := _isometric_corridor_edges(centerline, float(corridor.width))
 			if edges.is_empty():
 				continue
-			var merged_shapes: Array[PackedVector2Array] = []
-			for shape in combined_shapes:
-				var unions := Geometry2D.merge_polygons(shape, edges.floor)
-				if unions.is_empty():
-					merged_shapes.append(shape)
-					merged_shapes.append(edges.floor)
-				else:
-					merged_shapes.append_array(unions)
-			combined_shapes = merged_shapes
-	if combined_shapes.size() == 1:
-		_draw_textured_cave_floor(cave)
-		return
-	_draw_world_textured_floor_shapes(combined_shapes, cave.id)
+			_draw_world_textured_floor_shapes([edges.floor], cave.id)
 
 func _draw_world_textured_floor_shapes(shapes: Array[PackedVector2Array], cave_id: int) -> void:
 	var texture := _get_cave_floor_texture(cave_id)
 	var previous_repeat := texture_repeat
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	for shape in shapes:
-		var screen_shape := PackedVector2Array()
-		var uvs := PackedVector2Array()
-		var colors := PackedColorArray()
-		for world_point in shape:
-			screen_shape.append(_world_to_screen(world_point))
-			uvs.append(world_point / 256.0)
-			colors.append(Color.WHITE)
-		draw_polygon(screen_shape, colors, uvs, texture)
+		var triangles := Geometry2D.triangulate_polygon(shape)
+		if triangles.is_empty():
+			continue
+		for index in range(0, triangles.size(), 3):
+			var triangle := PackedVector2Array()
+			var uvs := PackedVector2Array()
+			var colors := PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE])
+			for vertex_index in range(3):
+				var world_point: Vector2 = shape[triangles[index + vertex_index]]
+				triangle.append(_world_to_screen(world_point))
+				uvs.append(world_point / 256.0)
+			draw_polygon(triangle, colors, uvs, texture)
 	texture_repeat = previous_repeat
 
 func _isometric_exit_stub(exit_info: Dictionary, corridor: Dictionary, cave: Dictionary) -> PackedVector2Array:
