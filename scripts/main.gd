@@ -385,8 +385,14 @@ func _draw_isometric_walls(cave: Dictionary) -> void:
 		for edge_range in visible_ranges:
 			var start := _world_to_screen(a.lerp(b, edge_range.x))
 			var finish := _world_to_screen(a.lerp(b, edge_range.y))
-			var wall_direction := 1.0 if (start.y + finish.y) * 0.5 >= center_y else -1.0
-			var wall_offset := Vector2(0, wall_height * wall_direction)
+			var edge_screen_y := (start.y + finish.y) * 0.5
+			if edge_screen_y < center_y:
+				# Back edges stay on the floor outline. Raising these walls makes
+				# the room look like it sits at another elevation.
+				draw_line(start, finish, Color("765044"), 0.9, true)
+				continue
+			# The front rim is the only side that drops below the shared floor.
+			var wall_offset := Vector2(0, wall_height)
 			draw_colored_polygon(PackedVector2Array([start, finish, finish + wall_offset, start + wall_offset]), Color("2e2224") if finish.x >= start.x else Color("37272a"))
 			draw_line(start, start + wall_offset, Color("765044"), 0.9, true)
 			draw_line(finish, finish + wall_offset, Color("21191d"), 0.9, true)
