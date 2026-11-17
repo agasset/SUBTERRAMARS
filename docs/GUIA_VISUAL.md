@@ -8,7 +8,7 @@ L'exploració té dues vistes 2D: mapa general superior per llegir la xarxa i vi
 
 | Vista | Contingut |
 | --- | --- |
-| Base, nivell 0 | Mòduls de superfície, energia i accés visible i clicable al nivell 1 |
+| Base, nivell 0 | Mòduls de superfície, energia i accés visible i clicable al nivell 1; retorn des de la sala d'entrada |
 | Mapa general | Contorns orgànics, connexions conegudes, estats, posicions petites i accessos detectats |
 | Sala isomètrica | Terra i parets de la sala, obstacles, explorador, robot i organismes observables a partir de les dades generades |
 | Fitxa lateral | Imatge ampliada de l’espècie, nom, descripció i registre |

@@ -54,6 +54,7 @@ var scan_button: Button
 var new_game_button: Button
 var map_return_button: Button
 var descend_button: Button
+var base_return_button: Button
 var level_panel: Control
 var bottom_panel: Control
 var analysis_tools_panel: Control
@@ -130,6 +131,7 @@ func _process(delta: float) -> void:
 		_discover_exit_near_unit()
 		_detect_caves_near_unit()
 		queue_redraw()
+	_update_base_return_availability()
 
 func _draw() -> void:
 	if world.is_empty():
@@ -341,8 +343,22 @@ func _draw_isometric_room() -> void:
 	for obstacle in world.obstacles:
 		if _point_inside_selected_cave(obstacle.position) and (room_is_scanned or _is_revealed(obstacle.position)):
 			_draw_isometric_obstacle(obstacle)
+	if cave.id == world.entry:
+		_draw_isometric_base_access(cave)
 	if _point_inside_selected_cave(unit_position) or _point_inside_isometric_exit(unit_position, cave) or _point_inside_connected_corridor(unit_position, cave):
 		_draw_isometric_explorer(unit_position)
+
+func _draw_isometric_base_access(cave: Dictionary) -> void:
+	var center := _world_to_screen(cave.position)
+	var radius_x := maxf(22.0, zoom_level * 7.5)
+	var radius_y := maxf(12.0, zoom_level * 3.8)
+	var shadow := _surface_ellipse_points(center + Vector2(0, 4), radius_x + 5.0, radius_y + 4.0, 24)
+	draw_colored_polygon(shadow, Color("06090d", 0.8))
+	draw_colored_polygon(_surface_ellipse_points(center, radius_x, radius_y, 24), Color("b47546"))
+	draw_colored_polygon(_surface_ellipse_points(center, radius_x - 5.0, radius_y - 3.0, 24), Color("11151b"))
+	draw_colored_polygon(_surface_ellipse_points(center, radius_x - 10.0, radius_y - 5.5, 24), Color("03070c"))
+	draw_arc(center, radius_x + 4.0, 0.0, TAU, 28, Color("ffac62"), maxf(1.5, zoom_level * 0.45), true)
+	draw_string(ThemeDB.fallback_font, center + Vector2(-76, radius_y + 25), "PUJADA A LA BASE", HORIZONTAL_ALIGNMENT_CENTER, 152, 10, Color("b8d9d8"))
 
 func _room_reveal_ratio(cave: Dictionary) -> float:
 	var contour: PackedVector2Array = cave.contour
@@ -771,7 +787,7 @@ func _build_ui() -> void:
 	ui_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ui_root.mouse_filter = Control.MOUSE_FILTER_PASS
 	add_child(ui_root)
-	var left := _panel(Rect2(18, 18, 280, 145))
+	var left := _panel(Rect2(18, 18, 280, 190))
 	ui_root.add_child(left)
 	_add_label(left, "SUBTERRA: MARS", 18, CYAN, Vector2(16, 12), Vector2(248, 26))
 	mode_heading_label = _add_label(left, "MAPA DE RECERCA   /   NIVELL 01", 10, MUTED, Vector2(16, 42), Vector2(248, 18))
@@ -794,7 +810,12 @@ func _build_ui() -> void:
 	descend_button.tooltip_text = "Entra pel forat d'accés fins a la xarxa de coves del nivell 1."
 	descend_button.pressed.connect(_descend_to_level_one)
 	left.add_child(descend_button)
-	status_label = _add_label(left, "GENERADOR P0B · %s" % Generator.GENERATOR_VERSION, 10, Color("89b0bb"), Vector2(16, 116), Vector2(248, 18))
+	base_return_button = _button("TORNA A LA BASE", Vector2(16, 116), Vector2(248, 32))
+	base_return_button.visible = false
+	base_return_button.tooltip_text = "Cal tornar a la sala d'entrada del nivell 1 per pujar a la superfície."
+	base_return_button.pressed.connect(_return_to_surface_base)
+	left.add_child(base_return_button)
+	status_label = _add_label(left, "GENERADOR P0B · %s" % Generator.GENERATOR_VERSION, 10, Color("89b0bb"), Vector2(16, 158), Vector2(248, 18))
 
 	level_panel = _panel(Rect2(0, 18, 280, 250))
 	level_panel.size.y = 330
@@ -1147,6 +1168,9 @@ func _update_view_mode_ui() -> void:
 		bottom_panel.visible = not analysis_mode and not surface_mode
 	if is_instance_valid(analysis_tools_panel):
 		analysis_tools_panel.visible = analysis_mode and not surface_mode
+	if is_instance_valid(base_return_button):
+		base_return_button.visible = not surface_mode and current_level > 0
+		_update_base_return_availability()
 
 func _return_to_map(requested_zoom: float = 0.62) -> void:
 	analysis_mode = false
@@ -1160,6 +1184,31 @@ func _return_to_map(requested_zoom: float = 0.62) -> void:
 	_update_scan_availability()
 	_update_view_mode_ui()
 	queue_redraw()
+
+func _return_to_surface_base() -> void:
+	if not _can_return_to_base():
+		return
+	surface_mode = true
+	current_level = 0
+	analysis_mode = false
+	selected_cave = -1
+	selected_cave_focus = Vector2.ZERO
+	moving = false
+	move_path.clear()
+	selected_route.clear()
+	chained_cave_id = -1
+	_update_scan_availability()
+	_update_view_mode_ui()
+	queue_redraw()
+
+func _can_return_to_base() -> bool:
+	return not surface_mode and current_level == 1 and current_cave_id == world.entry and _cave_at_position(unit_position) == world.entry and not moving
+
+func _update_base_return_availability() -> void:
+	if not is_instance_valid(base_return_button):
+		return
+	base_return_button.disabled = not _can_return_to_base()
+	base_return_button.tooltip_text = "Puja a la superfície des de la sala d'entrada." if _can_return_to_base() else "Torna a la sala d'entrada del nivell 1 per accedir a la base."
 
 func _exit_inspection() -> void:
 	if not analysis_mode:

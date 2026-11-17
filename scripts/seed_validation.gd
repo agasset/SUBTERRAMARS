@@ -235,7 +235,16 @@ func _surface_entry_valid(world: Dictionary) -> bool:
 	hatch_click.pressed = true
 	hatch_click.position = navigation_probe.call("_surface_hatch_center")
 	navigation_probe.call("_input", hatch_click)
-	return not navigation_probe.get("surface_mode") and int(navigation_probe.get("current_level")) == 1 and navigation_probe.get("unit_position").distance_to(entry_position) < 0.01 and navigation_probe.get("explored_caves").has(world.entry) and navigation_probe.call("_exit_count", world.entry) > 0
+	var entered_level_one: bool = not navigation_probe.get("surface_mode") and int(navigation_probe.get("current_level")) == 1 and navigation_probe.get("unit_position").distance_to(entry_position) < 0.01 and navigation_probe.get("explored_caves").has(world.entry) and navigation_probe.call("_exit_count", world.entry) > 0 and navigation_probe.get("base_return_button").visible and not navigation_probe.get("base_return_button").disabled
+	if not entered_level_one:
+		return false
+	var discovered_exit_count: int = navigation_probe.call("_exit_count", world.entry)
+	var revealed_before_return: PackedByteArray = navigation_probe.get("revealed_mask").duplicate()
+	navigation_probe.call("_return_to_surface_base")
+	if not navigation_probe.get("surface_mode") or int(navigation_probe.get("current_level")) != 0 or not navigation_probe.get("explored_caves").has(world.entry):
+		return false
+	navigation_probe.call("_descend_to_level_one")
+	return not navigation_probe.get("surface_mode") and int(navigation_probe.get("current_level")) == 1 and navigation_probe.get("unit_position").distance_to(entry_position) < 0.01 and navigation_probe.get("explored_caves").has(world.entry) and navigation_probe.call("_exit_count", world.entry) == discovered_exit_count and navigation_probe.get("revealed_mask") == revealed_before_return
 
 func _canonical(world: Dictionary) -> String:
 	var result: Array = []
