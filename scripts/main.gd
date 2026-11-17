@@ -1295,6 +1295,9 @@ func _reveal_around(center: Vector2, radius_cells: int) -> void:
 		var cave: Dictionary = world.caves[reveal_cave_id]
 		if not explored_caves.has(reveal_cave_id) and _room_reveal_ratio(cave) >= 0.90:
 			_reveal_entire_room(cave)
+			_scan_current_cave()
+			if is_instance_valid(status_label):
+				status_label.text = "SALA %02d DESCOBERTA · SORTIDES %d" % [reveal_cave_id + 1, _exit_count(reveal_cave_id)]
 	queue_redraw()
 
 func _reveal_entire_room(cave: Dictionary) -> void:

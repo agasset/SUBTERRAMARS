@@ -674,11 +674,20 @@ func _revelation_and_camera_valid(world: Dictionary) -> bool:
 	navigation_probe.set("explored_caves", {})
 	navigation_probe.set("analysis_mode", true)
 	navigation_probe.set("selected_cave", test_cave_id)
+	navigation_probe.set("current_cave_id", test_cave_id)
 	navigation_probe.set("unit_position", test_cave.position)
+	navigation_probe.set("discovered_exits", {})
 	if float(navigation_probe.call("_room_reveal_ratio", test_cave)) < 0.90:
 		return false
 	navigation_probe.call("_reveal_around", test_cave.position, 0)
-	return float(navigation_probe.call("_room_reveal_ratio", test_cave)) >= 0.999 and not navigation_probe.get("explored_caves").has(test_cave_id)
+	if float(navigation_probe.call("_room_reveal_ratio", test_cave)) < 0.999 or not navigation_probe.get("explored_caves").has(test_cave_id):
+		return false
+	for corridor in world.corridors:
+		if corridor.a == test_cave_id or corridor.b == test_cave_id:
+			var exit_key: String = navigation_probe.call("_exit_key", test_cave_id, corridor.id)
+			if not navigation_probe.get("discovered_exits").has(exit_key):
+				return false
+	return true
 
 func _count_walkable(mask: PackedByteArray) -> int:
 	var count := 0
