@@ -505,14 +505,18 @@ func _draw_isometric_corridor_mesh(centerline: PackedVector2Array, width: float)
 		var tangent := (following - previous).normalized()
 		if tangent.length_squared() < 0.001:
 			continue
-		var normal := Vector2(-tangent.y, tangent.x) * width * 0.5
+		# Build the sides perpendicular to the projected tangent, then invert
+		# that screen-space vector back into world coordinates. This preserves
+		# the same apparent floor plane and apparent passage width as the room.
+		var screen_tangent := _iso_project_relative(tangent, Vector2.ZERO).normalized()
+		var screen_normal := screen_tangent.orthogonal() * width * 0.5
+		var normal := _iso_unproject_relative(screen_normal)
 		left_edge.append(centerline[index] + normal)
 		right_edge.append(centerline[index] - normal)
 	if left_edge.size() < 2:
 		return
-	var vertical_height := clampf(width * zoom_level * 0.045, 1.0, 4.0)
-	# Match the passage rim height to the nearby room walls so the corridor reads
-	# as a continuation of the same cave rather than a flat slab.
+	# The tunnel floor stays on the room's floor plane. Only side faces rise
+	# from its edges; never offset the floor or its outline vertically.
 	var floor_shape := PackedVector2Array()
 	for point in left_edge:
 		floor_shape.append(_world_to_screen(point))
@@ -531,6 +535,13 @@ func _draw_isometric_corridor_mesh(centerline: PackedVector2Array, width: float)
 		draw_colored_polygon(PackedVector2Array([right_a, right_b, right_b + right_offset, right_a + right_offset]), Color("2e2224"))
 		draw_line(left_a + left_offset, left_b + left_offset, Color("805044"), maxf(0.7, zoom_level * 0.10), true)
 		draw_line(right_a + right_offset, right_b + right_offset, Color("68443c"), maxf(0.7, zoom_level * 0.09), true)
+
+func _iso_unproject_relative(point: Vector2) -> Vector2:
+	var scaled := point / ISO_AXIS_SCALE
+	var diagonal_sum: float = scaled.y / ISO_VERTICAL_RATIO
+	var world_x: float = (diagonal_sum + scaled.x) * 0.5
+	var world_y: float = (diagonal_sum - scaled.x) * 0.5
+	return Vector2(world_x, world_y)
 
 func _draw_isometric_obstacle(obstacle: Dictionary) -> void:
 	var radius: float = obstacle.radius
