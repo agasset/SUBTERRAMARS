@@ -84,6 +84,11 @@ func _analysis_blocks_exit_without_perspective_change(world: Dictionary) -> bool
 	var stub: PackedVector2Array = navigation_probe.call("_isometric_exit_stub", exit_info, selected_corridor, cave)
 	if stub.size() < 3:
 		return false
+	if not Geometry2D.is_point_in_polygon(stub[0] - cave.position, cave.contour):
+		return false
+	var threshold_distance := Geometry2D.get_closest_point_to_segment(exit_position, stub[0], stub[1]).distance_to(exit_position)
+	if threshold_distance > 2.0:
+		return false
 	var start_position: Vector2 = cave.position
 	var safe_room_target: Vector2 = cave.position.lerp(exit_position, 0.6)
 	var path_inside_room: Array[Vector2] = [safe_room_target]

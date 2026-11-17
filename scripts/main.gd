@@ -371,6 +371,7 @@ func _draw_isometric_walls(cave: Dictionary) -> void:
 				continue
 			var center_t := clampf((closest - a).dot(edge) / edge.length_squared(), 0.0, 1.0)
 			var half_gap_t := (_isometric_exit_screen_half_width(exit_info) + 8.0) / edge_length
+			cuts.append(Vector2(maxf(0.0, center_t - half_gap_t), minf(1.0, center_t + half_gap_t)))
 		cuts.sort_custom(func(left: Vector2, right: Vector2) -> bool: return left.x < right.x)
 		var visible_ranges: Array[Vector2] = []
 		var cursor := 0.0
@@ -433,35 +434,45 @@ func _draw_isometric_corridors(cave: Dictionary) -> void:
 			_draw_isometric_corridor_mesh(centerline, float(corridor.width))
 
 func _isometric_exit_stub(exit_info: Dictionary, corridor: Dictionary, cave: Dictionary) -> PackedVector2Array:
-	# Draw a short passage beginning just outside the room wall. Keeping the
-	# centerline on the actual corridor tangent makes its floor meet the opening
-	# without a wedge, while the generated corridor still defines its direction.
+	# Start slightly inside the room so the corridor floor overlaps the cave
+	# floor. This removes a black seam and gives both surfaces the same plane.
 	var outward: Vector2 = exit_info.direction.normalized()
 	if outward.length_squared() < 0.001:
 		return PackedVector2Array()
-	var edge_point: Vector2 = exit_info.position + outward * 3.0
-	var half_width: float = float(corridor.width) * 0.5
-	var start: Vector2 = edge_point + outward * (half_width * 0.30)
-	var tangent := outward
 	var route: PackedVector2Array = corridor.points
+	if route.size() < 3:
+		return PackedVector2Array()
 	if corridor.b == cave.id:
-		tangent = (route[route.size() - 2] - route[route.size() - 1]).normalized()
-	else:
-		tangent = (route[1] - route[0]).normalized()
+		var reversed_route := PackedVector2Array()
+		for point_index in range(route.size() - 1, -1, -1):
+			reversed_route.append(route[point_index])
+		route = reversed_route
+	var nearest_index := 0
+	var nearest_distance := INF
+	for index in range(route.size()):
+		var distance: float = route[index].distance_squared_to(exit_info.position)
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest_index = index
+	var route_end_index := mini(nearest_index + 3, route.size() - 1)
+	if route_end_index <= nearest_index:
+		return PackedVector2Array()
+	var start: Vector2 = exit_info.position - outward * 10.0
+	var finish: Vector2 = route[route_end_index]
+	var tangent: Vector2 = (route[nearest_index + 1] - route[nearest_index]).normalized()
 	if tangent.dot(outward) < 0.0:
 		tangent = -tangent
-	var length: float = clampf(float(cave.radius) * 0.30, 28.0, 48.0)
-	var bend_side: float = signf(outward.cross(tangent))
-	var side := outward.orthogonal() * bend_side
-	var finish: Vector2 = start + tangent * length
+	var length: float = start.distance_to(finish)
+	if length < 12.0:
+		return PackedVector2Array()
 	var points := PackedVector2Array()
-	var control_a: Vector2 = start + outward * length * 0.35
-	var control_b: Vector2 = finish - tangent * length * 0.35
+	var control_a: Vector2 = start + outward * length * 0.42
+	var control_b: Vector2 = finish - tangent * minf(length * 0.35, 18.0)
 	for step in range(13):
 		var t := float(step) / 12.0
 		var inverse := 1.0 - t
 		var point: Vector2 = inverse * inverse * inverse * start + 3.0 * inverse * inverse * t * control_a + 3.0 * inverse * t * t * control_b + t * t * t * finish
-		points.append(point + side * sin(t * PI) * minf(float(corridor.width) * 0.12, 4.5))
+		points.append(point)
 	return points
 
 func _isometric_exit_screen_half_width(exit_info: Dictionary) -> float:
