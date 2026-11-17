@@ -228,3 +228,7 @@ Correcció d'abast: l'ajust anterior de l'alçada de les parets de la sala no tr
 ## Galeries amb paviment visible
 
 La revisió va mostrar que la unió booleana del contorn de sala i el corredor podia deixar el paviment de les galeries sense textura. Ara es dibuixa primer el terra complet de la sala explorada i cada galeria es pinta com una franja triangulada separada, coplanària i amb UV del món perquè la textura continuï a través de la boca. Verificació: Godot 4.6.2 importa i executa la captura OpenGL reports/sortida_isometrica.png. La galeria hi apareix pintada. Bateria de llavors: 51/51 aprovada; git diff --check net.
+
+## Boques de galeria proporcionades
+
+La captura de la sala 05 amb sis sortides va revelar franges massa amples i llargues. L'amplada de cada galeria ara es calcula en coordenades del món, igual que la boca i la màscara transitable; el tram local visible és curt, s'estreny gradualment i acaba fonent-se amb la zona fosca. El centre passa exactament per la posició de la sortida i segueix l'inici de la corba procedural. El paviment es dibuixa per triangles consecutius per evitar polígons invàlids a les corbes. Verificació: importació Godot 4.6.2 sense errors, bateria de 51 llavors aprovada, captura OpenGL de la sala 05 amb sis sortides a reports/galeries_sala_05.png i captura actualitzada a reports/sortida_isometrica.png. Limitació: la captura visual no substitueix una prova manual de moviment amb el jugador.

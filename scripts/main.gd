@@ -226,8 +226,8 @@ func _draw_isometric_room() -> void:
 		draw_colored_polygon(known_contour, Color("432e2c"))
 	_draw_isometric_floor(cave, min_cell_x, max_cell_x, min_cell_y, max_cell_y)
 	if room_is_known:
-		# The tunnel floor is merged with this cave's floor polygon. Draw its
-		# details afterward so rocks remain on top of the shared ground plane.
+		# Draw the gallery floors over the cave floor with matching world UVs.
+		# Rocks follow so they remain above both coplanar surfaces.
 		_draw_isometric_corridors(cave)
 		if explored_caves.has(cave.id):
 			_draw_procedural_rock_details(cave)
@@ -370,7 +370,7 @@ func _draw_isometric_walls(cave: Dictionary) -> void:
 			if closest.distance_to(exit_info.position) > float(exit_info.width) * 0.5 + 4.0:
 				continue
 			var center_t := clampf((closest - a).dot(edge) / edge.length_squared(), 0.0, 1.0)
-			var half_gap_t := (_isometric_exit_screen_half_width(exit_info) + 8.0) / edge_length
+			var half_gap_t := (float(exit_info.width) * 0.5 + 5.0) / edge_length
 			cuts.append(Vector2(maxf(0.0, center_t - half_gap_t), minf(1.0, center_t + half_gap_t)))
 		cuts.sort_custom(func(left: Vector2, right: Vector2) -> bool: return left.x < right.x)
 		var visible_ranges: Array[Vector2] = []
@@ -407,7 +407,7 @@ func _draw_isometric_contour(cave: Dictionary) -> void:
 			if closest.distance_to(exit_info.position) > float(exit_info.width) * 0.5 + 4.0:
 				continue
 			var center_t := clampf((closest - a).dot(edge) / edge.length_squared(), 0.0, 1.0)
-			var half_gap_t := (_isometric_exit_screen_half_width(exit_info) + 3.0) / edge_length
+			var half_gap_t := (float(exit_info.width) * 0.5 + 2.0) / edge_length
 			cuts.append(Vector2(maxf(0.0, center_t - half_gap_t), minf(1.0, center_t + half_gap_t)))
 		cuts.sort_custom(func(left: Vector2, right: Vector2) -> bool: return left.x < right.x)
 		var cursor := 0.0
@@ -434,24 +434,28 @@ func _draw_isometric_corridors(cave: Dictionary) -> void:
 			var edges := _isometric_corridor_edges(centerline, float(corridor.width))
 			if edges.is_empty():
 				continue
-			_draw_world_textured_floor_shapes([edges.floor], cave.id)
+			_draw_world_textured_corridor(edges, cave.id)
 
-func _draw_world_textured_floor_shapes(shapes: Array[PackedVector2Array], cave_id: int) -> void:
+func _draw_world_textured_corridor(edges: Dictionary, cave_id: int) -> void:
 	var texture := _get_cave_floor_texture(cave_id)
 	var previous_repeat := texture_repeat
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
-	for shape in shapes:
-		var triangles := Geometry2D.triangulate_polygon(shape)
-		if triangles.is_empty():
-			continue
-		for index in range(0, triangles.size(), 3):
+	var left: PackedVector2Array = edges.left
+	var right: PackedVector2Array = edges.right
+	for index in range(left.size() - 1):
+		var alpha_a := 1.0 - smoothstep(0.62, 1.0, float(index) / float(left.size() - 1))
+		var alpha_b := 1.0 - smoothstep(0.62, 1.0, float(index + 1) / float(left.size() - 1))
+		var vertices := [left[index], right[index], left[index + 1], right[index + 1]]
+		var alphas := [alpha_a, alpha_a, alpha_b, alpha_b]
+		for triangle_indices in [[0, 1, 2], [2, 1, 3]]:
 			var triangle := PackedVector2Array()
 			var uvs := PackedVector2Array()
-			var colors := PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE])
-			for vertex_index in range(3):
-				var world_point: Vector2 = shape[triangles[index + vertex_index]]
+			var colors := PackedColorArray()
+			for vertex_index in triangle_indices:
+				var world_point: Vector2 = vertices[vertex_index]
 				triangle.append(_world_to_screen(world_point))
 				uvs.append(world_point / 256.0)
+				colors.append(Color(1.0, 1.0, 1.0, alphas[vertex_index]))
 			draw_polygon(triangle, colors, uvs, texture)
 	texture_repeat = previous_repeat
 
@@ -476,34 +480,29 @@ func _isometric_exit_stub(exit_info: Dictionary, corridor: Dictionary, cave: Dic
 		if distance < nearest_distance:
 			nearest_distance = distance
 			nearest_index = index
-	var route_end_index := mini(nearest_index + 3, route.size() - 1)
-	if route_end_index <= nearest_index:
-		return PackedVector2Array()
 	var start: Vector2 = exit_info.position - outward * 10.0
-	var finish: Vector2 = route[route_end_index]
-	var tangent: Vector2 = (route[nearest_index + 1] - route[nearest_index]).normalized()
-	if tangent.dot(outward) < 0.0:
-		tangent = -tangent
+	var visible_length: float = float(corridor.width) * 0.75
+	var finish: Vector2 = exit_info.position + outward * visible_length
+	var tangent: Vector2 = outward
+	for index in range(nearest_index + 1, route.size()):
+		var candidate: Vector2 = route[index] - exit_info.position
+		if candidate.dot(outward) <= 0.0:
+			continue
+		finish = exit_info.position + candidate.normalized() * minf(candidate.length(), visible_length)
+		tangent = (route[index] - route[index - 1]).normalized()
+		break
 	var length: float = start.distance_to(finish)
 	if length < 12.0:
 		return PackedVector2Array()
-	var points := PackedVector2Array()
-	var control_a: Vector2 = start + outward * length * 0.42
-	var control_b: Vector2 = finish - tangent * minf(length * 0.35, 18.0)
-	for step in range(13):
+	var points := PackedVector2Array([start, exit_info.position])
+	var control_a: Vector2 = exit_info.position + outward * visible_length * 0.42
+	var control_b: Vector2 = finish - tangent * minf(visible_length * 0.35, 18.0)
+	for step in range(1, 13):
 		var t := float(step) / 12.0
 		var inverse := 1.0 - t
-		var point: Vector2 = inverse * inverse * inverse * start + 3.0 * inverse * inverse * t * control_a + 3.0 * inverse * t * t * control_b + t * t * t * finish
+		var point: Vector2 = inverse * inverse * inverse * exit_info.position + 3.0 * inverse * inverse * t * control_a + 3.0 * inverse * t * t * control_b + t * t * t * finish
 		points.append(point)
 	return points
-
-func _isometric_exit_screen_half_width(exit_info: Dictionary) -> float:
-	# Exit width is stored in map-world units. Under the isometric projection
-	# the transverse axis is scaled differently, so compensate to match the
-	# projected passage mouth instead of leaving an oversized wall gap.
-	var direction: Vector2 = exit_info.direction.normalized()
-	var side := direction.orthogonal() * (float(exit_info.width) * 0.5)
-	return _iso_project_relative(side, Vector2.ZERO).length()
 
 func _point_inside_isometric_exit(point: Vector2, cave: Dictionary) -> bool:
 	for exit_info in _visible_exits_for_cave(cave.id):
@@ -538,29 +537,16 @@ func _isometric_corridor_edges(centerline: PackedVector2Array, width: float) -> 
 		var tangent := (following - previous).normalized()
 		if tangent.length_squared() < 0.001:
 			continue
-		# Build the sides perpendicular to the projected tangent, then invert
-		# that screen-space vector back into world coordinates. This preserves
-		# the same apparent floor plane and apparent passage width as the room.
-		var screen_tangent := _iso_project_relative(tangent, Vector2.ZERO).normalized()
-		var screen_normal := screen_tangent.orthogonal() * width * 0.5
-		var normal := _iso_unproject_relative(screen_normal)
+		# Width belongs to the world geometry, like the aperture and walkable mask.
+		# Screen-space width inflated the strip and made each opening a broad slab.
+		var progress := float(index) / float(centerline.size() - 1)
+		var half_width := width * 0.5 * lerpf(1.0, 0.62, progress * progress)
+		var normal := tangent.orthogonal() * half_width
 		left_edge.append(centerline[index] + normal)
 		right_edge.append(centerline[index] - normal)
 	if left_edge.size() < 2:
 		return {}
-	var floor_shape := PackedVector2Array()
-	for point in left_edge:
-		floor_shape.append(point)
-	for index in range(right_edge.size() - 1, -1, -1):
-		floor_shape.append(right_edge[index])
-	return {"floor": floor_shape}
-
-func _iso_unproject_relative(point: Vector2) -> Vector2:
-	var scaled := point / ISO_AXIS_SCALE
-	var diagonal_sum: float = scaled.y / ISO_VERTICAL_RATIO
-	var world_x: float = (diagonal_sum + scaled.x) * 0.5
-	var world_y: float = (diagonal_sum - scaled.x) * 0.5
-	return Vector2(world_x, world_y)
+	return {"left": left_edge, "right": right_edge}
 
 func _draw_isometric_obstacle(obstacle: Dictionary) -> void:
 	var radius: float = obstacle.radius
