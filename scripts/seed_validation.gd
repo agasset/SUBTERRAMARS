@@ -651,7 +651,34 @@ func _revelation_and_camera_valid(world: Dictionary) -> bool:
 	navigation_probe.set("camera_offset", Vector2(120, -80))
 	if navigation_probe.get("revealed_mask") != before or navigation_probe.get("unit_position") != initial_position:
 		return false
-	return initial_count > 0
+	if initial_count <= 0:
+		return false
+	var test_cave_id: int = (world.entry + 1) % world.caves.size()
+	var test_cave: Dictionary = world.caves[test_cave_id]
+	var interior_indices: Array[int] = []
+	for index in range(world.terrain_mask.size()):
+		if world.terrain_mask[index] == 0:
+			continue
+		var cell_x: int = index % world.grid_size.x
+		var cell_y: int = int(index / world.grid_size.x)
+		var center := Vector2((float(cell_x) + 0.5) * world.cell_size, (float(cell_y) + 0.5) * world.cell_size)
+		if Geometry2D.is_point_in_polygon(center - test_cave.position, test_cave.contour):
+			interior_indices.append(index)
+	if interior_indices.size() < 10:
+		return false
+	var partial_reveal: PackedByteArray = before.duplicate()
+	partial_reveal.fill(0)
+	for index in range(ceili(float(interior_indices.size()) * 0.91)):
+		partial_reveal[interior_indices[index]] = 1
+	navigation_probe.set("revealed_mask", partial_reveal)
+	navigation_probe.set("explored_caves", {})
+	navigation_probe.set("analysis_mode", true)
+	navigation_probe.set("selected_cave", test_cave_id)
+	navigation_probe.set("unit_position", test_cave.position)
+	if float(navigation_probe.call("_room_reveal_ratio", test_cave)) < 0.90:
+		return false
+	navigation_probe.call("_reveal_around", test_cave.position, 0)
+	return float(navigation_probe.call("_room_reveal_ratio", test_cave)) >= 0.999 and not navigation_probe.get("explored_caves").has(test_cave_id)
 
 func _count_walkable(mask: PackedByteArray) -> int:
 	var count := 0

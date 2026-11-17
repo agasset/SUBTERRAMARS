@@ -1290,7 +1290,32 @@ func _reveal_around(center: Vector2, radius_cells: int) -> void:
 			if offset.length_squared() <= radius_squared and terrain[index] == 1 and _has_line_of_sight(center_cell, Vector2i(x, y)):
 				revealed_mask[index] = 1
 	last_revealed_cell = center_cell
+	var reveal_cave_id := _cave_at_position(center)
+	if analysis_mode and reveal_cave_id == selected_cave and reveal_cave_id >= 0:
+		var cave: Dictionary = world.caves[reveal_cave_id]
+		if not explored_caves.has(reveal_cave_id) and _room_reveal_ratio(cave) >= 0.90:
+			_reveal_entire_room(cave)
 	queue_redraw()
+
+func _reveal_entire_room(cave: Dictionary) -> void:
+	var contour: PackedVector2Array = cave.contour
+	if contour.is_empty():
+		return
+	var bounds := Rect2(contour[0] + cave.position, Vector2.ZERO)
+	for point in contour:
+		bounds = bounds.expand(point + cave.position)
+	var min_x := maxi(0, floori(bounds.position.x / world.cell_size))
+	var max_x := mini(world.grid_size.x - 1, ceili(bounds.end.x / world.cell_size))
+	var min_y := maxi(0, floori(bounds.position.y / world.cell_size))
+	var max_y := mini(world.grid_size.y - 1, ceili(bounds.end.y / world.cell_size))
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			var index: int = y * world.grid_size.x + x
+			if world.terrain_mask[index] == 0:
+				continue
+			var center := Vector2((float(x) + 0.5) * world.cell_size, (float(y) + 0.5) * world.cell_size)
+			if Geometry2D.is_point_in_polygon(center - cave.position, contour):
+				revealed_mask[index] = 1
 
 func _has_line_of_sight(start: Vector2i, finish: Vector2i) -> bool:
 	if start == finish:
