@@ -54,7 +54,10 @@ func _initialize() -> void:
 	var cave_detection_ok := _caves_detected_by_proximity(Generator.generate(134027))
 	if not cave_detection_ok:
 		failures.append("approaching an unexplored cave should show a selectable sensor signature without revealing its contour")
-	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "inspection_room_boundary_valid": room_boundary_ok, "inspection_gallery_transition_valid": gallery_transition_ok, "cave_proximity_detection_valid": cave_detection_ok, "results": rows, "failures": failures}
+	var surface_entry_ok := _surface_entry_valid(Generator.generate(134027))
+	if not surface_entry_ok:
+		failures.append("new worlds should start at the level 0 base and descend through its hatch to the level 1 entry cave")
+	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "inspection_room_boundary_valid": room_boundary_ok, "inspection_gallery_transition_valid": gallery_transition_ok, "cave_proximity_detection_valid": cave_detection_ok, "surface_entry_valid": surface_entry_ok, "results": rows, "failures": failures}
 	DirAccess.make_dir_recursive_absolute("res://reports")
 	var file := FileAccess.open("res://reports/seed_validation_50.json", FileAccess.WRITE)
 	if file:
@@ -221,6 +224,18 @@ func _caves_detected_by_proximity(world: Dictionary) -> bool:
 	navigation_probe.call("_detect_caves_near_unit")
 	var not_detected_from_far_away: bool = not navigation_probe.get("detected_caves").has(target_id)
 	return detected_before_scan and marker_selects_preview and not_detected_from_far_away
+
+func _surface_entry_valid(world: Dictionary) -> bool:
+	navigation_probe.call("_new_world", int(world.seed))
+	if not navigation_probe.get("surface_mode") or int(navigation_probe.get("current_level")) != 0 or not navigation_probe.get("explored_caves").is_empty():
+		return false
+	var entry_position: Vector2 = world.caves[world.entry].position
+	var hatch_click := InputEventMouseButton.new()
+	hatch_click.button_index = MOUSE_BUTTON_LEFT
+	hatch_click.pressed = true
+	hatch_click.position = navigation_probe.call("_surface_hatch_center")
+	navigation_probe.call("_input", hatch_click)
+	return not navigation_probe.get("surface_mode") and int(navigation_probe.get("current_level")) == 1 and navigation_probe.get("unit_position").distance_to(entry_position) < 0.01 and navigation_probe.get("explored_caves").has(world.entry) and navigation_probe.call("_exit_count", world.entry) > 0
 
 func _canonical(world: Dictionary) -> String:
 	var result: Array = []

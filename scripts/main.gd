@@ -20,6 +20,8 @@ var zoom_level := 0.62
 var selected_cave := -1
 var selected_cave_focus := Vector2.ZERO
 var analysis_mode := false
+var surface_mode := true
+var current_level := 0
 var inspect_on_cave_arrival := false
 var unit_position := Vector2.ZERO
 var move_target := Vector2.ZERO
@@ -51,6 +53,7 @@ var dev_toggle: CheckButton
 var scan_button: Button
 var new_game_button: Button
 var map_return_button: Button
+var descend_button: Button
 var level_panel: Control
 var bottom_panel: Control
 var analysis_tools_panel: Control
@@ -129,9 +132,12 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 func _draw() -> void:
-	var view := _view_rect()
 	if world.is_empty():
 		return
+	if surface_mode:
+		_draw_surface_base()
+		return
+	var view := _view_rect()
 	if analysis_mode:
 		_draw_isometric_room()
 		return
@@ -202,6 +208,107 @@ func _draw() -> void:
 	var unit_screen := _world_to_screen(unit_position)
 	draw_circle(unit_screen, maxf(4.5, 7.0 * zoom_level), ORANGE)
 	draw_arc(unit_screen, maxf(7.0, 11.0 * zoom_level), 0, TAU, 16, Color("ffe2ba"), 1.4)
+
+func _draw_surface_base() -> void:
+	var viewport := get_viewport_rect()
+	var size := viewport.size
+	var center := viewport.get_center()
+	draw_rect(Rect2(Vector2.ZERO, size), Color("211415"))
+	var horizon := PackedVector2Array([Vector2(0, size.y * 0.27)])
+	var terrain_rng := RandomNumberGenerator.new()
+	terrain_rng.seed = int(posmod(seed_value * 23747 + 901, 0x7fffffff))
+	for x in range(0, int(size.x) + 90, 90):
+		horizon.append(Vector2(float(x), size.y * terrain_rng.randf_range(0.19, 0.31)))
+	horizon.append(Vector2(size.x, size.y))
+	horizon.append(Vector2(0, size.y))
+	draw_colored_polygon(horizon, Color("38201e"))
+	var foreground := PackedVector2Array([
+		Vector2(0, size.y * 0.76), Vector2(size.x * 0.19, size.y * 0.68),
+		Vector2(size.x * 0.37, size.y * 0.74), Vector2(size.x * 0.57, size.y * 0.67),
+		Vector2(size.x * 0.78, size.y * 0.75), Vector2(size.x, size.y * 0.65),
+		Vector2(size.x, size.y), Vector2(0, size.y)
+	])
+	draw_colored_polygon(foreground, Color("2b191a"))
+	for index in range(120):
+		var rock_center := Vector2(terrain_rng.randf_range(18.0, size.x - 18.0), terrain_rng.randf_range(size.y * 0.2, size.y - 12.0))
+		if rock_center.distance_to(center) < minf(size.x, size.y) * 0.31:
+			continue
+		var rx := terrain_rng.randf_range(2.0, 12.0)
+		var ry := rx * terrain_rng.randf_range(0.32, 0.72)
+		var stone := _surface_ellipse_points(rock_center, rx, ry, 7)
+		draw_colored_polygon(stone, Color("49302b") if index % 2 == 0 else Color("321f20"))
+	var pad := _surface_ellipse_points(center + Vector2(0, 34), 304, 183, 12)
+	draw_colored_polygon(pad, Color("302627"))
+	var pad_outline := pad.duplicate()
+	pad_outline.append(pad_outline[0])
+	draw_polyline(pad_outline, Color("725044"), 2.0, true)
+	# Three connected surface modules frame the descent hatch.
+	_draw_surface_module(Rect2(center + Vector2(-218, -121), Vector2(168, 84)), Color("4a3532"), Color("5de5ed"), "HABITAT")
+	_draw_surface_module(Rect2(center + Vector2(-34, -147), Vector2(171, 92)), Color("523b35"), Color("ffac62"), "CONTROL")
+	draw_line(center + Vector2(-58, -78), center + Vector2(-16, -20), Color("88a1a1"), 5.0, true)
+	draw_line(center + Vector2(-16, -20), center + Vector2(12, 35), Color("88a1a1"), 5.0, true)
+	# Solar array, with a visible grid so the base reads as a functional outpost.
+	var solar := Rect2(center + Vector2(174, -133), Vector2(166, 96))
+	draw_rect(solar.grow(6), Color("171c24"))
+	draw_rect(solar, Color("123642"))
+	for column in range(1, 6):
+		var px := solar.position.x + solar.size.x * float(column) / 6.0
+		draw_line(Vector2(px, solar.position.y), Vector2(px, solar.end.y), Color("31808a"), 2.0)
+	for row in range(1, 3):
+		var py := solar.position.y + solar.size.y * float(row) / 3.0
+		draw_line(Vector2(solar.position.x, py), Vector2(solar.end.x, py), Color("31808a"), 2.0)
+	draw_rect(Rect2(solar.position, Vector2(solar.size.x, 3)), CYAN)
+	# The access is a real, clickable hatch at the end of the lit path.
+	var hatch := _surface_hatch_center()
+	var path_start := center + Vector2(-8, -50)
+	for step in range(8):
+		var amount := float(step) / 8.0
+		draw_circle(path_start.lerp(hatch, amount), 2.2, Color("dd8a4c", 0.72))
+	_draw_surface_ellipse(hatch + Vector2(0, 8), 60, 35, Color("160f13"))
+	_draw_surface_ellipse(hatch, 56, 32, Color("64443a"))
+	_draw_surface_ellipse(hatch, 46, 25, Color("111319"))
+	var hatch_inner := _surface_ellipse_points(hatch + Vector2(-2, -2), 35, 17, 12)
+	draw_colored_polygon(hatch_inner, Color("05090e"))
+	var hatch_outline := _surface_ellipse_points(hatch, 56, 32, 32)
+	hatch_outline.append(hatch_outline[0])
+	draw_polyline(hatch_outline, Color("ffac62"), 3.2, true)
+	draw_arc(hatch, 64, PI * 1.05, PI * 1.95, 24, Color("5de5ed"), 2.0, true)
+	draw_line(hatch + Vector2(-13, -4), hatch + Vector2(-13, 13), Color("9da7a2"), 2.0, true)
+	draw_line(hatch + Vector2(13, -4), hatch + Vector2(13, 13), Color("9da7a2"), 2.0, true)
+	draw_string(ThemeDB.fallback_font, hatch + Vector2(-82, 61), "ACCÉS · NIVELL 01", HORIZONTAL_ALIGNMENT_CENTER, 164, 12, Color("b8d9d8"))
+	# Small suit marker beside the hatch: the explorer starts at the base.
+	var explorer := hatch + Vector2(-87, -17)
+	draw_circle(explorer + Vector2(0, 8), 10, Color("101014"))
+	draw_rect(Rect2(explorer + Vector2(-6, -5), Vector2(12, 13)), Color("a9683c"))
+	draw_circle(explorer + Vector2(0, -9), 5, Color("b9c9bf"))
+	draw_circle(explorer + Vector2(1, -9), 2, CYAN)
+
+func _surface_hatch_center() -> Vector2:
+	var viewport_size := Vector2(1440, 900)
+	if is_inside_tree():
+		viewport_size = get_viewport_rect().size
+	return viewport_size * 0.5 + Vector2(4, 109)
+
+func _surface_ellipse_points(center: Vector2, radius_x: float, radius_y: float, point_count: int) -> PackedVector2Array:
+	var points := PackedVector2Array()
+	for index in range(point_count):
+		var angle := TAU * float(index) / float(point_count)
+		points.append(center + Vector2(cos(angle) * radius_x, sin(angle) * radius_y))
+	return points
+
+func _draw_surface_ellipse(center: Vector2, radius_x: float, radius_y: float, color: Color) -> void:
+	draw_colored_polygon(_surface_ellipse_points(center, radius_x, radius_y, 32), color)
+
+func _draw_surface_module(rect: Rect2, color: Color, accent: Color, label: String) -> void:
+	draw_rect(Rect2(rect.position + Vector2(5, 8), rect.size), Color("130f13", 0.8))
+	draw_rect(rect, color)
+	draw_rect(rect, Color("9a7461"), false, 2.0)
+	draw_rect(Rect2(rect.position + Vector2(9, 10), Vector2(rect.size.x - 18, 9)), accent)
+	for window_index in range(4):
+		var window_position := rect.position + Vector2(17 + window_index * 35, 33)
+		draw_rect(Rect2(window_position, Vector2(23, 18)), Color("142c35"))
+		draw_rect(Rect2(window_position, Vector2(23, 18)), Color("598b8d"), false, 1.0)
+	draw_string(ThemeDB.fallback_font, rect.position + Vector2(0, rect.size.y - 9), label, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, 10, Color("d1bbb0"))
 
 func _draw_isometric_room() -> void:
 	if selected_cave < 0 or selected_cave >= world.caves.size():
@@ -682,6 +789,11 @@ func _build_ui() -> void:
 	map_return_button.tooltip_text = "Torna a la vista general del mapa."
 	map_return_button.pressed.connect(_exit_inspection)
 	left.add_child(map_return_button)
+	descend_button = _button("BAIXA AL NIVELL 1", Vector2(16, 76), Vector2(248, 34))
+	descend_button.visible = false
+	descend_button.tooltip_text = "Entra pel forat d'accés fins a la xarxa de coves del nivell 1."
+	descend_button.pressed.connect(_descend_to_level_one)
+	left.add_child(descend_button)
 	status_label = _add_label(left, "GENERADOR P0B · %s" % Generator.GENERATOR_VERSION, 10, Color("89b0bb"), Vector2(16, 116), Vector2(248, 18))
 
 	level_panel = _panel(Rect2(0, 18, 280, 250))
@@ -793,6 +905,8 @@ func _new_world(value: int) -> void:
 	selected_cave = -1
 	selected_cave_focus = Vector2.ZERO
 	analysis_mode = false
+	surface_mode = true
+	current_level = 0
 	unit_position = world.caves[world.entry].position
 	move_target = unit_position
 	moving = false
@@ -805,11 +919,9 @@ func _new_world(value: int) -> void:
 	cave_floor_textures.clear()
 	explored_caves.clear()
 	detected_caves.clear()
-	explored_caves[world.entry] = true
 	revealed_mask.resize(world.terrain_mask.size())
 	revealed_mask.fill(0)
 	last_revealed_cell = Vector2i(-1, -1)
-	_reveal_around(unit_position, 5)
 	camera_offset = Vector2.ZERO
 	if is_instance_valid(status_label):
 		status_label.text = "LLAVOR %d · %d ms · %s" % [seed_value, elapsed, "RESERVA" if world.fallback else "P0B"]
@@ -817,6 +929,28 @@ func _new_world(value: int) -> void:
 	_update_scan_availability()
 	_update_view_mode_ui()
 	camera_offset = -(unit_position - Generator.WORLD_RECT.size * 0.5) * zoom_level
+	queue_redraw()
+
+func _descend_to_level_one() -> void:
+	if not surface_mode or world.is_empty():
+		return
+	surface_mode = false
+	current_level = 1
+	analysis_mode = false
+	selected_cave = -1
+	selected_cave_focus = Vector2.ZERO
+	current_cave_id = world.entry
+	unit_position = world.caves[world.entry].position
+	move_target = unit_position
+	moving = false
+	move_path.clear()
+	selected_route.clear()
+	zoom_level = 1.1
+	_reveal_around(unit_position, 5)
+	_scan_current_cave()
+	camera_offset = -(unit_position - Generator.WORLD_RECT.size * 0.5) * zoom_level
+	_update_scan_availability()
+	_update_view_mode_ui()
 	_detect_caves_near_unit()
 	queue_redraw()
 
@@ -842,6 +976,14 @@ func _update_map_stats() -> void:
 	exit_count_label.text = str(_exit_count(current_cave_id))
 
 func _input(event: InputEvent) -> void:
+	if surface_mode:
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and not _over_ui(event.position):
+			var hatch_delta: Vector2 = event.position - _surface_hatch_center()
+			if pow(hatch_delta.x / 56.0, 2.0) + pow(hatch_delta.y / 32.0, 2.0) <= 1.0:
+				_descend_to_level_one()
+		elif event is InputEventKey and event.pressed and (event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER):
+			_descend_to_level_one()
+		return
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			_zoom_at(event.position, 1.16)
@@ -971,11 +1113,19 @@ func _analysis_zoom_for_cave(cave_id: int) -> float:
 func _update_view_mode_ui() -> void:
 	if not is_instance_valid(mode_heading_label):
 		return
-	if analysis_mode and selected_cave >= 0 and selected_cave < world.caves.size():
+	if surface_mode:
+		mode_heading_label.text = "BASE MARCIANA · NIVELL 00"
+		seed_edit.visible = false
+		new_game_button.visible = false
+		map_return_button.visible = false
+		descend_button.visible = true
+		status_label.text = "SUPERFÍCIE · ACCÉS A COVES DISPONIBLE"
+	elif analysis_mode and selected_cave >= 0 and selected_cave < world.caves.size():
 		mode_heading_label.text = "EXPLORACIÓ DE SALA %02d" % (selected_cave + 1)
 		seed_edit.visible = false
 		new_game_button.visible = false
 		map_return_button.visible = true
+		descend_button.visible = false
 		if selected_cave == current_cave_id and not explored_caves.has(selected_cave):
 			status_label.text = "SALA NO ESCANEJADA · ESCÀNER DISPONIBLE"
 		elif not explored_caves.has(selected_cave):
@@ -986,16 +1136,17 @@ func _update_view_mode_ui() -> void:
 			status_label.text = "SALA EXPLORADA · VISUALITZACIÓ"
 	else:
 		analysis_mode = false
-		mode_heading_label.text = "MAPA DE RECERCA   /   NIVELL 01"
+		mode_heading_label.text = "MAPA DE RECERCA   /   NIVELL %02d" % current_level
 		seed_edit.visible = true
 		new_game_button.visible = true
 		map_return_button.visible = false
+		descend_button.visible = false
 	if is_instance_valid(level_panel):
-		level_panel.visible = not analysis_mode
+		level_panel.visible = not analysis_mode and not surface_mode
 	if is_instance_valid(bottom_panel):
-		bottom_panel.visible = not analysis_mode
+		bottom_panel.visible = not analysis_mode and not surface_mode
 	if is_instance_valid(analysis_tools_panel):
-		analysis_tools_panel.visible = analysis_mode
+		analysis_tools_panel.visible = analysis_mode and not surface_mode
 
 func _return_to_map(requested_zoom: float = 0.62) -> void:
 	analysis_mode = false

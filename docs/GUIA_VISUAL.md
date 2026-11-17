@@ -2,12 +2,13 @@
 
 ## Decisió aprovada més recent — revisió visual 1.4
 
-El joc té dues vistes 2D: mapa general superior per llegir la xarxa i vista isomètrica local per explorar una sala. Entrar o obrir una sala amaga el mapa general i mostra l’escena local amb terra, parets i eines d’exploració. Tornar al mapa recupera la mateixa xarxa i estat. No és 3D ni un nivell artesanal: la vista isomètrica projecta les dades procedurals de la sala.
+L'exploració té dues vistes 2D: mapa general superior per llegir la xarxa i vista isomètrica local per explorar una sala. La partida comença a la base de superfície del nivell 0, amb un accés visible al nivell subterrani 1. Entrar o obrir una sala amaga el mapa general i mostra l’escena local amb terra, parets i eines d’exploració. Tornar al mapa recupera la mateixa xarxa i estat. No és 3D ni un nivell artesanal: la vista isomètrica projecta les dades procedurals de la sala.
 
 ## Què s’ha de veure
 
 | Vista | Contingut |
 | --- | --- |
+| Base, nivell 0 | Mòduls de superfície, energia i accés visible i clicable al nivell 1 |
 | Mapa general | Contorns orgànics, connexions conegudes, estats, posicions petites i accessos detectats |
 | Sala isomètrica | Terra i parets de la sala, obstacles, explorador, robot i organismes observables a partir de les dades generades |
 | Fitxa lateral | Imatge ampliada de l’espècie, nom, descripció i registre |

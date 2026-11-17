@@ -1180,5 +1180,6 @@
 			"walkable_connected": true
 		}
 	],
-	"sample_size": 51
+	"sample_size": 51,
+	"surface_entry_valid": true
 }
