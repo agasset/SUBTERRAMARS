@@ -241,6 +241,6 @@ En exploració de sala, un clic dret sobre una galeria visible dona una ordre de
 
 Quan una ordre de moviment porta l'explorador des del mapa o per una galeria fins a una altra sala, en travessar el contorn s'activa l'exploració isomètrica, la càmera centra la sala i aplica el zoom d'inspecció. La ruta dins la sala continua fins al punt d'arribada. Verificació: la prova de moviment simula la sortida de la vista d'inspecció, el pas pel mapa i l'entrada a la sala connectada; comprova que el mode d'inspecció s'activa allà. També passen les sis sortides de la sala 05 i el total de 51 llavors.
 
-## Inspecció isomètrica sense descoberta automàtica
+## Format isomètric complet sense descoberta automàtica
 
-En arribar a una sala nova, la càmera entra al mode isomètric correcte, però conserva la boira de guerra i l'estat desconegut. Només el que s'ha revelat localment és visible fins que s'utilitza l'escàner; no es pinta el contorn complet, no es mostren tots els detalls i no s'afegeixen sortides conegudes. Verificació: la prova de trajecte comprova que s'activa inspecció en arribar i que la sala continua absent de explored_caves; bateria 51/51 aprovada.
+En arribar a una sala nova, la vista isomètrica mostra la geometria completa de la cambra (terra, parets i detalls), però la visita visual es manté separada de `explored_caves`. L'estat de descoberta continua pendent, l'escàner segueix disponible i les altres sortides no s'afegeixen com a conegudes. Verificació: la prova de trajecte comprova la visita visual i que la sala no aparegui a `explored_caves`; bateria 51/51 aprovada.
