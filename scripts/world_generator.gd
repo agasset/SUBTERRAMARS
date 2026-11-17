@@ -6,7 +6,7 @@ const WORLD_RECT := Rect2(0, 0, 2200, 1500)
 const MIN_DISTANCE := 205.0
 const CELL_SIZE := 10.0
 const GRID_SIZE := Vector2i(220, 150)
-const GENERATOR_VERSION := "p0b-3"
+const GENERATOR_VERSION := "p0b-4"
 const LAYOUT_SEED_VERSION := "p0b-2"
 
 static func _seed_for(seed_value: int, domain: String, index: int) -> int:
@@ -122,17 +122,18 @@ static func _make_corridor(seed_value: int, corridor_id: int, cave_a_id: int, ca
 	var perpendicular := travel.orthogonal().normalized()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = _seed_for(seed_value, "corridor_geometry", corridor_id)
-	var bend: float = clampf(travel.length() * rng.randf_range(0.10, 0.22), 35.0, 180.0) * (-1.0 if rng.randf() < 0.5 else 1.0)
-	var secondary_bend: float = rng.randf_range(-55.0, 55.0)
+	var bend: float = clampf(travel.length() * rng.randf_range(0.14, 0.26), 48.0, 225.0) * (-1.0 if rng.randf() < 0.5 else 1.0)
+	var secondary_limit: float = minf(125.0, travel.length() * 0.16)
+	var secondary_bend: float = rng.randf_range(-secondary_limit, secondary_limit)
 	var margin := 52.0
 	var control_a := start + travel * 0.28 + perpendicular * bend
-	var control_b := start + travel * 0.72 + perpendicular * (bend * 0.62 + secondary_bend)
+	var control_b := start + travel * 0.72 + perpendicular * (bend * 0.20 + secondary_bend)
 	control_a.x = clampf(control_a.x, margin, WORLD_RECT.size.x - margin)
 	control_a.y = clampf(control_a.y, margin, WORLD_RECT.size.y - margin)
 	control_b.x = clampf(control_b.x, margin, WORLD_RECT.size.x - margin)
 	control_b.y = clampf(control_b.y, margin, WORLD_RECT.size.y - margin)
 	var points := PackedVector2Array()
-	var steps := 10
+	var steps := 16
 	for step in range(steps + 1):
 		var t := float(step) / float(steps)
 		var inverse := 1.0 - t

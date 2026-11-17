@@ -23,6 +23,7 @@ var analysis_mode := false
 var surface_mode := true
 var current_level := 0
 var inspect_on_cave_arrival := false
+var inspection_destination_cave_id := -1
 var unit_position := Vector2.ZERO
 var move_target := Vector2.ZERO
 var moving := false
@@ -935,6 +936,7 @@ func _new_world(value: int) -> void:
 	selected_route.clear()
 	inspection_corridor_id = -1
 	chained_cave_id = -1
+	inspection_destination_cave_id = -1
 	current_cave_id = world.entry
 	discovered_exits.clear()
 	cave_floor_textures.clear()
@@ -1020,7 +1022,8 @@ func _input(event: InputEvent) -> void:
 			if not order.is_empty():
 				var path := _path_for_order(order)
 				if not path.is_empty():
-					inspect_on_cave_arrival = not analysis_mode
+					inspection_destination_cave_id = int(order.get("inspection_cave_id", -1))
+					inspect_on_cave_arrival = not analysis_mode and inspection_destination_cave_id >= 0
 					inspection_corridor_id = int(order.get("corridor_id", -1)) if analysis_mode else -1
 					chained_cave_id = int(order.cave_id)
 					chained_arrival = world.caves[chained_cave_id].position if chained_cave_id >= 0 else Vector2.ZERO
@@ -1363,7 +1366,7 @@ func _resolve_order_target(point: Vector2) -> Dictionary:
 			var destination: int = gallery.b if gallery.a == current_cave_id else gallery.a
 			var arrival := _arrival_point(destination, gallery.id)
 			if not _find_path(unit_position, arrival).is_empty():
-				return {"position": arrival, "cave_id": -1, "corridor_id": gallery.id}
+				return {"position": arrival, "cave_id": -1, "corridor_id": gallery.id, "inspection_cave_id": destination}
 	# A click inside a revealed neighboring room is a room movement order,
 	# even when the small room lies close to its connecting mouth.
 	var containing_cave := -1
@@ -1375,13 +1378,13 @@ func _resolve_order_target(point: Vector2) -> Dictionary:
 		var reachable_room := _reachable_revealed_cells(unit_position)
 		var room_target := _nearest_revealed_walkable_in_cave(containing_cave, point, reachable_room)
 		if room_target.x >= 0:
-			return {"position": Vector2((float(room_target.x) + 0.5) * world.cell_size, (float(room_target.y) + 0.5) * world.cell_size), "cave_id": -1}
+			return {"position": Vector2((float(room_target.x) + 0.5) * world.cell_size, (float(room_target.y) + 0.5) * world.cell_size), "cave_id": -1, "inspection_cave_id": containing_cave}
 	var exit_cave := _known_exit_cave(point)
 	if exit_cave >= 0:
 		var reachable_for_exit := _reachable_revealed_cells(unit_position)
 		var exit_target := _nearest_revealed_walkable_in_cave(exit_cave, point, reachable_for_exit)
 		if exit_target.x >= 0:
-			return {"position": Vector2((float(exit_target.x) + 0.5) * world.cell_size, (float(exit_target.y) + 0.5) * world.cell_size), "cave_id": exit_cave}
+			return {"position": Vector2((float(exit_target.x) + 0.5) * world.cell_size, (float(exit_target.y) + 0.5) * world.cell_size), "cave_id": exit_cave, "inspection_cave_id": exit_cave}
 		return {}
 	var reachable := _reachable_revealed_cells(unit_position)
 	if containing_cave >= 0:
@@ -1589,11 +1592,12 @@ func _update_current_cave() -> void:
 		if Geometry2D.is_point_in_polygon(unit_position - cave.position, cave.contour):
 			if current_cave_id != cave.id:
 				current_cave_id = cave.id
-				if not analysis_mode and inspect_on_cave_arrival:
+				if not analysis_mode and inspect_on_cave_arrival and cave.id == inspection_destination_cave_id:
 					selected_cave = cave.id
 					selected_cave_focus = cave.position
 					analysis_mode = true
 					inspect_on_cave_arrival = false
+					inspection_destination_cave_id = -1
 					inspection_corridor_id = -1
 					_update_scan_availability()
 					_update_view_mode_ui()

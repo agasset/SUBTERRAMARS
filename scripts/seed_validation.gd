@@ -43,6 +43,7 @@ func _initialize() -> void:
 		failures.append("inspection should block crossing the room boundary until the player switches to the map")
 	var gallery_world := Generator.generate(134027)
 	var gallery_transition_ok := _analysis_gallery_transition_valid(gallery_world)
+	var intermediate_room_skip_ok := _map_order_skips_intermediate_rooms(gallery_world)
 	var six_exit_room_count := 0
 	for corridor in gallery_world.corridors:
 		if corridor.a == 4 or corridor.b == 4:
@@ -51,13 +52,15 @@ func _initialize() -> void:
 		gallery_transition_ok = _analysis_gallery_transition_valid(gallery_world, 4, exit_index) and gallery_transition_ok
 	if not gallery_transition_ok:
 		failures.append("a gallery movement order should walk out of inspection and continue on the map")
+	if not intermediate_room_skip_ok:
+		failures.append("a map movement order should pass through scanned intermediate rooms and inspect only its clicked destination")
 	var cave_detection_ok := _caves_detected_by_proximity(Generator.generate(134027))
 	if not cave_detection_ok:
 		failures.append("approaching an unexplored cave should show a selectable sensor signature without revealing its contour")
 	var surface_entry_ok := _surface_entry_valid(Generator.generate(134027))
 	if not surface_entry_ok:
 		failures.append("new worlds should start at the level 0 base and descend through its hatch to the level 1 entry cave")
-	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "inspection_room_boundary_valid": room_boundary_ok, "inspection_gallery_transition_valid": gallery_transition_ok, "cave_proximity_detection_valid": cave_detection_ok, "surface_entry_valid": surface_entry_ok, "results": rows, "failures": failures}
+	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "inspection_room_boundary_valid": room_boundary_ok, "inspection_gallery_transition_valid": gallery_transition_ok, "map_skips_scanned_intermediate_rooms": intermediate_room_skip_ok, "cave_proximity_detection_valid": cave_detection_ok, "surface_entry_valid": surface_entry_ok, "results": rows, "failures": failures}
 	DirAccess.make_dir_recursive_absolute("res://reports")
 	var file := FileAccess.open("res://reports/seed_validation_50.json", FileAccess.WRITE)
 	if file:
@@ -104,6 +107,7 @@ func _analysis_gallery_transition_valid(world: Dictionary, requested_cave_id: in
 	if path.is_empty():
 		return false
 	navigation_probe.set("inspection_corridor_id", int(order.corridor_id))
+	navigation_probe.set("inspection_destination_cave_id", destination_id)
 	navigation_probe.set("move_path", path)
 	navigation_probe.set("selected_route", path.duplicate())
 	navigation_probe.set("move_target", path.back())
@@ -130,6 +134,75 @@ func _analysis_gallery_transition_valid(world: Dictionary, requested_cave_id: in
 							visible_cells += 1
 			return navigation_probe.call("_point_inside_cave_id", navigation_probe.get("unit_position"), destination_id) and not explored.has(destination_id) and visible_cells > 0 and visible_cells < room_cells
 	return false
+
+func _map_order_skips_intermediate_rooms(world: Dictionary) -> bool:
+	navigation_probe.set("world", world)
+	navigation_probe.set("dev_mode", false)
+	navigation_probe.set("surface_mode", false)
+	navigation_probe.set("analysis_mode", false)
+	navigation_probe.set("moving", false)
+	navigation_probe.set("chained_cave_id", -1)
+	navigation_probe.set("inspect_on_cave_arrival", false)
+	navigation_probe.set("inspection_destination_cave_id", -1)
+	var source_id: int = world.entry
+	var source: Dictionary = world.caves[source_id]
+	var revealed := PackedByteArray()
+	revealed.resize(world.terrain_mask.size())
+	revealed.fill(1)
+	navigation_probe.set("revealed_mask", revealed)
+	navigation_probe.set("current_cave_id", source_id)
+	navigation_probe.set("unit_position", source.position)
+	navigation_probe.set("explored_caves", {source_id: true})
+	var chosen_target := -1
+	var chosen_path: Array[Vector2] = []
+	var intermediate_ids: Dictionary = {}
+	for candidate_id in range(world.caves.size()):
+		if candidate_id == source_id:
+			continue
+		var candidate: Dictionary = world.caves[candidate_id]
+		var candidate_path: Array[Vector2] = navigation_probe.call("_find_path", source.position, candidate.position)
+		if candidate_path.is_empty():
+			continue
+		var crossed: Dictionary = {}
+		for point in candidate_path:
+			var cave_id: int = navigation_probe.call("_cave_at_position", point)
+			if cave_id >= 0 and cave_id != source_id and cave_id != candidate_id:
+				crossed[cave_id] = true
+		if not crossed.is_empty():
+			chosen_target = candidate_id
+			chosen_path = candidate_path
+			intermediate_ids = crossed
+			break
+	if chosen_target < 0:
+		return false
+	var target: Dictionary = world.caves[chosen_target]
+	var order: Dictionary = navigation_probe.call("_resolve_order_target", target.position)
+	if order.is_empty() or int(order.get("inspection_cave_id", -1)) != chosen_target:
+		return false
+	chosen_path = navigation_probe.call("_path_for_order", order)
+	if chosen_path.is_empty():
+		return false
+	var scanned_intermediates: Dictionary = {source_id: true}
+	for cave_id in intermediate_ids:
+		scanned_intermediates[cave_id] = true
+	navigation_probe.set("explored_caves", scanned_intermediates)
+	navigation_probe.set("inspection_destination_cave_id", chosen_target)
+	navigation_probe.set("inspect_on_cave_arrival", true)
+	navigation_probe.set("move_path", chosen_path)
+	navigation_probe.set("selected_route", chosen_path.duplicate())
+	navigation_probe.set("move_target", chosen_path.back())
+	navigation_probe.set("moving", true)
+	var saw_intermediate := false
+	for _step in range(1000):
+		navigation_probe.call("_process", 0.1)
+		var current_id: int = navigation_probe.get("current_cave_id")
+		if intermediate_ids.has(current_id):
+			saw_intermediate = true
+			if bool(navigation_probe.get("analysis_mode")):
+				return false
+		if not bool(navigation_probe.get("moving")):
+			break
+	return saw_intermediate and int(navigation_probe.get("current_cave_id")) == chosen_target and bool(navigation_probe.get("analysis_mode")) and int(navigation_probe.get("selected_cave")) == chosen_target
 
 func _analysis_blocks_exit_without_perspective_change(world: Dictionary) -> bool:
 	navigation_probe.set("world", world)
