@@ -229,7 +229,7 @@ func _draw_isometric_room() -> void:
 	if room_is_known:
 		_draw_isometric_walls(cave)
 		_draw_isometric_contour(cave)
-	elif detected_caves.has(selected_cave):
+	elif detected_caves.has(selected_cave) and selected_cave != current_cave_id:
 		_draw_cave_detection_signature(cave)
 	for obstacle in world.obstacles:
 		if _point_inside_selected_cave(obstacle.position) and (room_is_known or _is_revealed(obstacle.position)):
@@ -247,6 +247,9 @@ func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int,
 	# Keep the scan fog, but use the same world-anchored floor material as the
 	# fully scanned room so visible cells read as part of one continuous surface.
 	var half_tile: float = world.cell_size * 0.5
+	var room_shape := PackedVector2Array()
+	for point in cave.contour:
+		room_shape.append(cave.position + point)
 	var texture := _get_cave_floor_texture(cave.id)
 	var previous_repeat := texture_repeat
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
@@ -256,21 +259,28 @@ func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int,
 			if terrain[index] == 0 or revealed[index] == 0:
 				continue
 			var cell_center := Vector2((float(x) + 0.5) * world.cell_size, (float(y) + 0.5) * world.cell_size)
-			if not Geometry2D.is_point_in_polygon(cell_center - cave.position, cave.contour):
-				continue
 			var world_points := PackedVector2Array([
 				cell_center + Vector2(-half_tile, -half_tile),
 				cell_center + Vector2(half_tile, -half_tile),
 				cell_center + Vector2(half_tile, half_tile),
 				cell_center + Vector2(-half_tile, half_tile)
 			])
-			var screen_points := PackedVector2Array()
-			var uvs := PackedVector2Array()
-			for world_point in world_points:
-				screen_points.append(_world_to_screen(world_point))
-				uvs.append(world_point / 256.0)
-			draw_polygon(screen_points, PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE]), uvs, texture)
+			for clipped_shape in Geometry2D.intersect_polygons(world_points, room_shape):
+				_draw_textured_floor_shape(clipped_shape, texture)
 	texture_repeat = previous_repeat
+
+func _draw_textured_floor_shape(shape: PackedVector2Array, texture: Texture2D) -> void:
+	var triangles := Geometry2D.triangulate_polygon(shape)
+	for index in range(0, triangles.size(), 3):
+		var triangle := PackedVector2Array()
+		var uvs := PackedVector2Array()
+		var colors := PackedColorArray()
+		for vertex_index in range(3):
+			var world_point: Vector2 = shape[triangles[index + vertex_index]]
+			triangle.append(_world_to_screen(world_point))
+			uvs.append(world_point / 256.0)
+			colors.append(Color.WHITE)
+		draw_polygon(triangle, colors, uvs, texture)
 
 func _draw_textured_cave_floor(cave: Dictionary) -> void:
 	var contour: PackedVector2Array = cave.contour
@@ -338,7 +348,7 @@ func _draw_procedural_rock_details(cave: Dictionary) -> void:
 			var vertex_angle := TAU * float(side) / float(sides) + rotation
 			var roughness := rng.randf_range(0.84, 1.12)
 			var point := center + Vector2(cos(vertex_angle) * radius_x * roughness, sin(vertex_angle) * radius_y * roughness)
-			if not Geometry2D.is_point_in_polygon(point - cave.position, contour):
+			if not Geometry2D.is_point_in_polygon(point - cave.position, contour) or (not explored_caves.has(cave.id) and not _is_revealed(point)):
 				rock_is_inside = false
 			rock.append(_world_to_screen(point))
 		if not rock_is_inside:
