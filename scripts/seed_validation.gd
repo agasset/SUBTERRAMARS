@@ -76,6 +76,8 @@ func _analysis_gallery_transition_valid(world: Dictionary, requested_cave_id: in
 	navigation_probe.set("unit_position", cave.position)
 	navigation_probe.set("moving", false)
 	navigation_probe.set("dev_mode", false)
+	navigation_probe.set("explored_caves", {cave_id: true})
+	navigation_probe.set("visited_caves", {cave_id: true})
 	var revealed := PackedByteArray()
 	revealed.resize(world.terrain_mask.size())
 	revealed.fill(0)
@@ -111,7 +113,9 @@ func _analysis_gallery_transition_valid(world: Dictionary, requested_cave_id: in
 		if not bool(navigation_probe.get("analysis_mode")):
 			saw_map_mode = true
 		elif saw_map_mode and int(navigation_probe.get("selected_cave")) == destination_id:
-			return navigation_probe.call("_point_inside_cave_id", navigation_probe.get("unit_position"), destination_id)
+			var visited: Dictionary = navigation_probe.get("visited_caves")
+			var explored: Dictionary = navigation_probe.get("explored_caves")
+			return navigation_probe.call("_point_inside_cave_id", navigation_probe.get("unit_position"), destination_id) and visited.has(destination_id) and not explored.has(destination_id)
 	return false
 
 func _analysis_blocks_exit_without_perspective_change(world: Dictionary) -> bool:

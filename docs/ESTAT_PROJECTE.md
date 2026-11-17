@@ -240,3 +240,7 @@ En exploració de sala, un clic dret sobre una galeria visible dona una ordre de
 ## Inspecció automàtica en arribar a una sala
 
 Quan una ordre de moviment porta l'explorador des del mapa o per una galeria fins a una altra sala, en travessar el contorn s'activa l'exploració isomètrica, la càmera centra la sala i aplica el zoom d'inspecció. La ruta dins la sala continua fins al punt d'arribada. Verificació: la prova de moviment simula la sortida de la vista d'inspecció, el pas pel mapa i l'entrada a la sala connectada; comprova que el mode d'inspecció s'activa allà. També passen les sis sortides de la sala 05 i el total de 51 llavors.
+
+## Vista completa en arribar sense escàner
+
+En arribar a una sala nova, la vista d'inspecció mostra el contorn, paviment, parets i detalls visuals de la sala com després d'un escaneig. La visita visual es desa a `visited_caves` i queda separada de `explored_caves`: no activa l'escàner, no marca la sala com a escanejada ni revela les altres sortides. L'acció d'escanejar continua disponible per descobrir-les. Verificació: la prova de trajecte comprova que la sala d'arribada queda visitada visualment però no escanejada; bateria 51/51 aprovada.
