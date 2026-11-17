@@ -220,16 +220,17 @@ func _draw_isometric_room() -> void:
 	var min_cell_y := maxi(0, floori((cave.position.y + local_bounds.position.y) / world.cell_size))
 	var max_cell_y := mini(world.grid_size.y - 1, ceili((cave.position.y + local_bounds.end.y) / world.cell_size))
 	if room_is_known:
-		_draw_isometric_walls(cave)
 		var known_contour := PackedVector2Array()
 		for point in contour:
 			known_contour.append(_world_to_screen(cave.position + point))
 		draw_colored_polygon(known_contour, Color("432e2c"))
 	_draw_isometric_floor(cave, min_cell_x, max_cell_x, min_cell_y, max_cell_y)
 	if room_is_known:
-		# The short passage throat is layered over the floor to seal raster gaps;
-		# the explorer is rendered afterward so it always stays in front.
+		# Draw the passage first, then the room's cut walls over its inner edge.
+		# This makes the corridor emerge through the doorway instead of sitting
+		# underneath a continuous wall strip.
 		_draw_isometric_corridors(cave)
+		_draw_isometric_walls(cave)
 		_draw_isometric_contour(cave)
 	elif detected_caves.has(selected_cave):
 		_draw_cave_detection_signature(cave)
@@ -369,8 +370,7 @@ func _draw_isometric_walls(cave: Dictionary) -> void:
 			if closest.distance_to(exit_info.position) > float(exit_info.width) * 0.5 + 4.0:
 				continue
 			var center_t := clampf((closest - a).dot(edge) / edge.length_squared(), 0.0, 1.0)
-			var half_gap_t := (float(exit_info.width) * 0.5 + 4.0) / edge_length
-			cuts.append(Vector2(maxf(0.0, center_t - half_gap_t), minf(1.0, center_t + half_gap_t)))
+			var half_gap_t := (_isometric_exit_screen_half_width(exit_info) + 8.0) / edge_length
 		cuts.sort_custom(func(left: Vector2, right: Vector2) -> bool: return left.x < right.x)
 		var visible_ranges: Array[Vector2] = []
 		var cursor := 0.0
@@ -405,7 +405,7 @@ func _draw_isometric_contour(cave: Dictionary) -> void:
 			if closest.distance_to(exit_info.position) > float(exit_info.width) * 0.5 + 4.0:
 				continue
 			var center_t := clampf((closest - a).dot(edge) / edge.length_squared(), 0.0, 1.0)
-			var half_gap_t := (float(exit_info.width) * 0.5 + 3.0) / edge_length
+			var half_gap_t := (_isometric_exit_screen_half_width(exit_info) + 3.0) / edge_length
 			cuts.append(Vector2(maxf(0.0, center_t - half_gap_t), minf(1.0, center_t + half_gap_t)))
 		cuts.sort_custom(func(left: Vector2, right: Vector2) -> bool: return left.x < right.x)
 		var cursor := 0.0
@@ -433,41 +433,44 @@ func _draw_isometric_corridors(cave: Dictionary) -> void:
 			_draw_isometric_corridor_mesh(centerline, float(corridor.width))
 
 func _isometric_exit_stub(exit_info: Dictionary, corridor: Dictionary, cave: Dictionary) -> PackedVector2Array:
-	# Draw a short isometric throat from the exact wall opening. The map's
-	# center-to-center tunnel path can bend independently of the room boundary,
-	# so it must not be stretched across the chamber as a second floor layer.
+	# Draw a short passage beginning just outside the room wall. Keeping the
+	# centerline on the actual corridor tangent makes its floor meet the opening
+	# without a wedge, while the generated corridor still defines its direction.
 	var outward: Vector2 = exit_info.direction.normalized()
 	if outward.length_squared() < 0.001:
 		return PackedVector2Array()
+	var edge_point: Vector2 = exit_info.position + outward * 3.0
+	var half_width: float = float(corridor.width) * 0.5
+	var start: Vector2 = edge_point + outward * (half_width * 0.30)
+	var tangent := outward
 	var route: PackedVector2Array = corridor.points
 	if corridor.b == cave.id:
-		route = PackedVector2Array()
-		for point_index in range(corridor.points.size() - 1, -1, -1):
-			route.append(corridor.points[point_index])
-	var nearest_index := 0
-	var nearest_distance := INF
-	for index in range(route.size()):
-		var distance: float = route[index].distance_squared_to(exit_info.position)
-		if distance < nearest_distance:
-			nearest_distance = distance
-			nearest_index = index
-	var route_tangent: Vector2 = (route[mini(nearest_index + 1, route.size() - 1)] - route[nearest_index]).normalized()
-	var bend_side := signf(outward.cross(route_tangent))
-	if is_zero_approx(bend_side):
-		bend_side = 1.0 if posmod(int(corridor.id), 2) == 0 else -1.0
+		tangent = (route[route.size() - 2] - route[route.size() - 1]).normalized()
+	else:
+		tangent = (route[1] - route[0]).normalized()
+	if tangent.dot(outward) < 0.0:
+		tangent = -tangent
+	var length: float = clampf(float(cave.radius) * 0.30, 28.0, 48.0)
+	var bend_side: float = signf(outward.cross(tangent))
 	var side := outward.orthogonal() * bend_side
-	var length: float = clampf(float(cave.radius) * 0.22, 18.0, 28.0)
-	var bend: float = clampf(float(corridor.width) * 0.14, 3.0, 7.0)
-	var start: Vector2 = exit_info.position
-	var control_a := start + outward * length * 0.34
-	var control_b := start + outward * length * 0.72 + side * bend * 0.3
-	var finish := start + outward * length + side * bend
+	var finish: Vector2 = start + tangent * length
 	var points := PackedVector2Array()
-	for step in range(9):
-		var t := float(step) / 8.0
+	var control_a: Vector2 = start + outward * length * 0.35
+	var control_b: Vector2 = finish - tangent * length * 0.35
+	for step in range(13):
+		var t := float(step) / 12.0
 		var inverse := 1.0 - t
-		points.append(inverse * inverse * inverse * start + 3.0 * inverse * inverse * t * control_a + 3.0 * inverse * t * t * control_b + t * t * t * finish)
+		var point: Vector2 = inverse * inverse * inverse * start + 3.0 * inverse * inverse * t * control_a + 3.0 * inverse * t * t * control_b + t * t * t * finish
+		points.append(point + side * sin(t * PI) * minf(float(corridor.width) * 0.12, 4.5))
 	return points
+
+func _isometric_exit_screen_half_width(exit_info: Dictionary) -> float:
+	# Exit width is stored in map-world units. Under the isometric projection
+	# the transverse axis is scaled differently, so compensate to match the
+	# projected passage mouth instead of leaving an oversized wall gap.
+	var direction: Vector2 = exit_info.direction.normalized()
+	var side := direction.orthogonal() * (float(exit_info.width) * 0.5)
+	return _iso_project_relative(side, Vector2.ZERO).length()
 
 func _point_inside_isometric_exit(point: Vector2, cave: Dictionary) -> bool:
 	for exit_info in _visible_exits_for_cave(cave.id):
@@ -507,24 +510,27 @@ func _draw_isometric_corridor_mesh(centerline: PackedVector2Array, width: float)
 		right_edge.append(centerline[index] - normal)
 	if left_edge.size() < 2:
 		return
-	var vertical_height := clampf(width * zoom_level * 0.12, 2.0, 9.0)
-	# In the close room view, raised tunnel walls formed bulky panels that
-	# obscured the doorway. Keep the throat readable as a connected floor with
-	# low, narrow rims; room walls already define the opening.
+	var vertical_height := clampf(width * zoom_level * 0.045, 1.0, 4.0)
+	# Match the passage rim height to the nearby room walls so the corridor reads
+	# as a continuation of the same cave rather than a flat slab.
 	var floor_shape := PackedVector2Array()
 	for point in left_edge:
 		floor_shape.append(_world_to_screen(point))
 	for index in range(right_edge.size() - 1, -1, -1):
 		floor_shape.append(_world_to_screen(right_edge[index]))
-	draw_colored_polygon(floor_shape, Color("4b302d"))
-	var left_rim := PackedVector2Array()
-	var right_rim := PackedVector2Array()
-	for point in left_edge:
-		left_rim.append(_world_to_screen(point) - Vector2(0, vertical_height * 0.45))
-	for point in right_edge:
-		right_rim.append(_world_to_screen(point) - Vector2(0, vertical_height * 0.45))
-	draw_polyline(left_rim, Color("805044"), maxf(0.8, zoom_level * 0.14), true)
-	draw_polyline(right_rim, Color("68443c"), maxf(0.8, zoom_level * 0.12), true)
+	draw_colored_polygon(floor_shape, Color("493431"))
+	var wall_height := 8.0 + zoom_level * 1.5
+	for index in range(left_edge.size() - 1):
+		var left_a := _world_to_screen(left_edge[index])
+		var left_b := _world_to_screen(left_edge[index + 1])
+		var right_a := _world_to_screen(right_edge[index])
+		var right_b := _world_to_screen(right_edge[index + 1])
+		var left_offset := Vector2(0.0, -wall_height)
+		var right_offset := Vector2(0.0, -wall_height)
+		draw_colored_polygon(PackedVector2Array([left_a, left_b, left_b + left_offset, left_a + left_offset]), Color("382729"))
+		draw_colored_polygon(PackedVector2Array([right_a, right_b, right_b + right_offset, right_a + right_offset]), Color("2e2224"))
+		draw_line(left_a + left_offset, left_b + left_offset, Color("805044"), maxf(0.7, zoom_level * 0.10), true)
+		draw_line(right_a + right_offset, right_b + right_offset, Color("68443c"), maxf(0.7, zoom_level * 0.09), true)
 
 func _draw_isometric_obstacle(obstacle: Dictionary) -> void:
 	var radius: float = obstacle.radius
