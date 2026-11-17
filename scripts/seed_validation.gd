@@ -86,6 +86,12 @@ func _analysis_gallery_transition_valid(world: Dictionary, requested_cave_id: in
 	if exit_index >= exits.size():
 		return false
 	var exit_info: Dictionary = exits[exit_index]
+	var destination_id: int = exit_info.other_cave_id if exit_info.has("other_cave_id") else -1
+	if destination_id < 0:
+		for corridor in world.corridors:
+			if corridor.id == exit_info.corridor_id:
+				destination_id = corridor.b if corridor.a == cave_id else corridor.a
+				break
 	var click_position: Vector2 = exit_info.position + exit_info.direction * float(exit_info.width) * 0.2
 	var order: Dictionary = navigation_probe.call("_resolve_order_target", click_position)
 	if order.is_empty() or int(order.get("corridor_id", -1)) != int(exit_info.corridor_id):
@@ -98,10 +104,14 @@ func _analysis_gallery_transition_valid(world: Dictionary, requested_cave_id: in
 	navigation_probe.set("selected_route", path.duplicate())
 	navigation_probe.set("move_target", path.back())
 	navigation_probe.set("moving", true)
+	navigation_probe.set("inspect_on_cave_arrival", false)
+	var saw_map_mode := false
 	for step in range(160):
 		navigation_probe.call("_process", 0.1)
 		if not bool(navigation_probe.get("analysis_mode")):
-			return int(navigation_probe.get("selected_cave")) == -1 and not navigation_probe.call("_point_inside_cave_id", navigation_probe.get("unit_position"), cave_id)
+			saw_map_mode = true
+		elif saw_map_mode and int(navigation_probe.get("selected_cave")) == destination_id:
+			return navigation_probe.call("_point_inside_cave_id", navigation_probe.get("unit_position"), destination_id)
 	return false
 
 func _analysis_blocks_exit_without_perspective_change(world: Dictionary) -> bool:

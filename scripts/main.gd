@@ -20,6 +20,7 @@ var zoom_level := 0.62
 var selected_cave := -1
 var selected_cave_focus := Vector2.ZERO
 var analysis_mode := false
+var inspect_on_cave_arrival := false
 var unit_position := Vector2.ZERO
 var move_target := Vector2.ZERO
 var moving := false
@@ -100,6 +101,7 @@ func _process(delta: float) -> void:
 				if next_position.distance_to(exit_position) >= float(gallery.width) * 0.65:
 					unit_position = next_position
 					_return_to_map(1.1)
+					inspect_on_cave_arrival = true
 			unit_position = next_position
 			if reaches_waypoint:
 				move_path.pop_front()
@@ -804,6 +806,7 @@ func _input(event: InputEvent) -> void:
 			if not order.is_empty():
 				var path := _path_for_order(order)
 				if not path.is_empty():
+					inspect_on_cave_arrival = not analysis_mode
 					inspection_corridor_id = int(order.get("corridor_id", -1)) if analysis_mode else -1
 					chained_cave_id = int(order.cave_id)
 					chained_arrival = world.caves[chained_cave_id].position if chained_cave_id >= 0 else Vector2.ZERO
@@ -943,6 +946,7 @@ func _update_view_mode_ui() -> void:
 
 func _return_to_map(requested_zoom: float = 0.62) -> void:
 	analysis_mode = false
+	inspect_on_cave_arrival = false
 	inspection_corridor_id = -1
 	selected_cave = -1
 	selected_cave_focus = Vector2.ZERO
@@ -1304,6 +1308,15 @@ func _update_current_cave() -> void:
 		if Geometry2D.is_point_in_polygon(unit_position - cave.position, cave.contour):
 			if current_cave_id != cave.id:
 				current_cave_id = cave.id
+				if not analysis_mode and inspect_on_cave_arrival:
+					selected_cave = cave.id
+					selected_cave_focus = cave.position
+					analysis_mode = true
+					inspect_on_cave_arrival = false
+					inspection_corridor_id = -1
+					_update_scan_availability()
+					_update_view_mode_ui()
+					_focus_world_position(cave.position, _analysis_zoom_for_cave(cave.id))
 				if is_instance_valid(status_label):
 					status_label.text = "EXPLORANT LA SALA %02d" % (current_cave_id + 1)
 				_update_map_stats()
