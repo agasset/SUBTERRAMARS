@@ -34,7 +34,6 @@ var last_revealed_cell := Vector2i(-1, -1)
 var current_cave_id := -1
 var discovered_exits: Dictionary = {}
 var cave_floor_textures: Dictionary = {}
-var visited_caves: Dictionary = {}
 var show_graph := true
 var show_contours := true
 var show_route := true
@@ -207,7 +206,7 @@ func _draw_isometric_room() -> void:
 		return
 	var cave: Dictionary = world.caves[selected_cave]
 	var contour: PackedVector2Array = cave.contour
-	var room_is_known: bool = explored_caves.has(selected_cave) or visited_caves.has(selected_cave)
+	var room_is_known: bool = explored_caves.has(selected_cave)
 	var local_bounds := Rect2(contour[0], Vector2.ZERO)
 	for point in contour:
 		local_bounds = local_bounds.expand(point)
@@ -232,13 +231,13 @@ func _draw_isometric_room() -> void:
 	elif detected_caves.has(selected_cave):
 		_draw_cave_detection_signature(cave)
 	for obstacle in world.obstacles:
-		if _point_inside_selected_cave(obstacle.position) and (room_is_known or _is_revealed(obstacle.position)):
+		if _point_inside_selected_cave(obstacle.position) and _is_revealed(obstacle.position):
 			_draw_isometric_obstacle(obstacle)
 	if _point_inside_selected_cave(unit_position) or _point_inside_isometric_exit(unit_position, cave) or _point_inside_connected_corridor(unit_position, cave):
 		_draw_isometric_explorer(unit_position)
 
 func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int, max_y: int) -> void:
-	if explored_caves.has(cave.id) or visited_caves.has(cave.id):
+	if explored_caves.has(cave.id):
 		_draw_textured_cave_floor(cave)
 		return
 	var terrain: PackedByteArray = world.terrain_mask
@@ -754,10 +753,8 @@ func _new_world(value: int) -> void:
 	discovered_exits.clear()
 	cave_floor_textures.clear()
 	explored_caves.clear()
-	visited_caves.clear()
 	detected_caves.clear()
 	explored_caves[world.entry] = true
-	visited_caves[world.entry] = true
 	revealed_mask.resize(world.terrain_mask.size())
 	revealed_mask.fill(0)
 	last_revealed_cell = Vector2i(-1, -1)
@@ -1312,7 +1309,6 @@ func _update_current_cave() -> void:
 			if current_cave_id != cave.id:
 				current_cave_id = cave.id
 				if not analysis_mode and inspect_on_cave_arrival:
-					visited_caves[cave.id] = true
 					selected_cave = cave.id
 					selected_cave_focus = cave.position
 					analysis_mode = true
