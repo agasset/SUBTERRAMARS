@@ -526,26 +526,23 @@ func _draw_isometric_corridor_mesh(centerline: PackedVector2Array, width: float)
 		right_edge.append(centerline[index] - normal)
 	if left_edge.size() < 2:
 		return
-	# The tunnel floor stays on the room's floor plane. Only side faces rise
-	# from its edges; never offset the floor or its outline vertically.
+	# A corridor floor is a patch on the same projected ground plane as the room.
+	# Do not extrude it into a raised slab: the room walls provide the depth cue.
 	var floor_shape := PackedVector2Array()
 	for point in left_edge:
 		floor_shape.append(_world_to_screen(point))
 	for index in range(right_edge.size() - 1, -1, -1):
 		floor_shape.append(_world_to_screen(right_edge[index]))
 	draw_colored_polygon(floor_shape, Color("493431"))
-	var wall_height := 8.0 + zoom_level * 1.5
-	for index in range(left_edge.size() - 1):
-		var left_a := _world_to_screen(left_edge[index])
-		var left_b := _world_to_screen(left_edge[index + 1])
-		var right_a := _world_to_screen(right_edge[index])
-		var right_b := _world_to_screen(right_edge[index + 1])
-		var left_offset := Vector2(0.0, -wall_height)
-		var right_offset := Vector2(0.0, -wall_height)
-		draw_colored_polygon(PackedVector2Array([left_a, left_b, left_b + left_offset, left_a + left_offset]), Color("382729"))
-		draw_colored_polygon(PackedVector2Array([right_a, right_b, right_b + right_offset, right_a + right_offset]), Color("2e2224"))
-		draw_line(left_a + left_offset, left_b + left_offset, Color("805044"), maxf(0.7, zoom_level * 0.10), true)
-		draw_line(right_a + right_offset, right_b + right_offset, Color("68443c"), maxf(0.7, zoom_level * 0.09), true)
+	# Keep the mouth invisible while it overlaps the cave floor; outline only
+	# the exposed tunnel edges beyond the room threshold, in the floor plane.
+	var exposed_left := PackedVector2Array()
+	var exposed_right := PackedVector2Array()
+	for index in range(2, left_edge.size()):
+		exposed_left.append(_world_to_screen(left_edge[index]))
+		exposed_right.append(_world_to_screen(right_edge[index]))
+	draw_polyline(exposed_left, Color("805044"), maxf(0.8, zoom_level * 0.11), true)
+	draw_polyline(exposed_right, Color("68443c"), maxf(0.8, zoom_level * 0.10), true)
 
 func _iso_unproject_relative(point: Vector2) -> Vector2:
 	var scaled := point / ISO_AXIS_SCALE
