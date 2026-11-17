@@ -386,13 +386,8 @@ func _draw_isometric_walls(cave: Dictionary) -> void:
 			var start := _world_to_screen(a.lerp(b, edge_range.x))
 			var finish := _world_to_screen(a.lerp(b, edge_range.y))
 			var edge_screen_y := (start.y + finish.y) * 0.5
-			if edge_screen_y < center_y:
-				# Back edges stay on the floor outline. Raising these walls makes
-				# the room look like it sits at another elevation.
-				draw_line(start, finish, Color("765044"), 0.9, true)
-				continue
-			# The front rim is the only side that drops below the shared floor.
-			var wall_offset := Vector2(0, wall_height)
+			var wall_direction := 1.0 if edge_screen_y >= center_y else -1.0
+			var wall_offset := Vector2(0, wall_height * wall_direction)
 			draw_colored_polygon(PackedVector2Array([start, finish, finish + wall_offset, start + wall_offset]), Color("2e2224") if finish.x >= start.x else Color("37272a"))
 			draw_line(start, start + wall_offset, Color("765044"), 0.9, true)
 			draw_line(finish, finish + wall_offset, Color("21191d"), 0.9, true)
@@ -425,12 +420,11 @@ func _draw_isometric_contour(cave: Dictionary) -> void:
 			draw_line(_world_to_screen(a.lerp(b, cursor)), _world_to_screen(b), Color("805043"), maxf(1.2, zoom_level * 0.3), true)
 
 func _draw_isometric_corridors(cave: Dictionary) -> void:
-	# Extend the cave footprint through its known exits, then draw the combined
-	# coplanar surface once with the same world-anchored floor texture.
+	# Extend the cave footprint through known exits and draw it as one continuous
+	# floor surface. Gallery rims would make this same-level floor read as a ramp.
 	var combined_shapes: Array[PackedVector2Array] = [PackedVector2Array()]
 	for point in cave.contour:
 		combined_shapes[0].append(cave.position + point)
-	var exposed_edges: Array[Dictionary] = []
 	for exit_info in _visible_exits_for_cave(cave.id):
 		var corridor: Dictionary = {}
 		for candidate in world.corridors:
@@ -453,13 +447,10 @@ func _draw_isometric_corridors(cave: Dictionary) -> void:
 				else:
 					merged_shapes.append_array(unions)
 			combined_shapes = merged_shapes
-			exposed_edges.append(edges)
-	if exposed_edges.is_empty():
+	if combined_shapes.size() == 1:
 		_draw_textured_cave_floor(cave)
 		return
 	_draw_world_textured_floor_shapes(combined_shapes, cave.id)
-	for edges in exposed_edges:
-		_draw_isometric_corridor_edges(edges)
 
 func _draw_world_textured_floor_shapes(shapes: Array[PackedVector2Array], cave_id: int) -> void:
 	var texture := _get_cave_floor_texture(cave_id)
@@ -574,19 +565,7 @@ func _isometric_corridor_edges(centerline: PackedVector2Array, width: float) -> 
 		floor_shape.append(point)
 	for index in range(right_edge.size() - 1, -1, -1):
 		floor_shape.append(right_edge[index])
-	return {"floor": floor_shape, "left": left_edge, "right": right_edge}
-
-func _draw_isometric_corridor_edges(edges: Dictionary) -> void:
-	# The edge strokes start beyond the room mouth and stay on the ground plane.
-	var left_edge: PackedVector2Array = edges.left
-	var right_edge: PackedVector2Array = edges.right
-	var exposed_left := PackedVector2Array()
-	var exposed_right := PackedVector2Array()
-	for index in range(2, left_edge.size()):
-		exposed_left.append(_world_to_screen(left_edge[index]))
-		exposed_right.append(_world_to_screen(right_edge[index]))
-	draw_polyline(exposed_left, Color("805044"), maxf(0.8, zoom_level * 0.11), true)
-	draw_polyline(exposed_right, Color("68443c"), maxf(0.8, zoom_level * 0.10), true)
+	return {"floor": floor_shape}
 
 func _iso_unproject_relative(point: Vector2) -> Vector2:
 	var scaled := point / ISO_AXIS_SCALE
