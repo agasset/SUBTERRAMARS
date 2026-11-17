@@ -41,10 +41,20 @@ func _initialize() -> void:
 	var room_boundary_ok := _analysis_blocks_exit_without_perspective_change(Generator.generate(134027))
 	if not room_boundary_ok:
 		failures.append("inspection should block crossing the room boundary until the player switches to the map")
+	var gallery_world := Generator.generate(134027)
+	var gallery_transition_ok := _analysis_gallery_transition_valid(gallery_world)
+	var six_exit_room_count := 0
+	for corridor in gallery_world.corridors:
+		if corridor.a == 4 or corridor.b == 4:
+			six_exit_room_count += 1
+	for exit_index in range(six_exit_room_count):
+		gallery_transition_ok = _analysis_gallery_transition_valid(gallery_world, 4, exit_index) and gallery_transition_ok
+	if not gallery_transition_ok:
+		failures.append("a gallery movement order should walk out of inspection and continue on the map")
 	var cave_detection_ok := _caves_detected_by_proximity(Generator.generate(134027))
 	if not cave_detection_ok:
 		failures.append("approaching an unexplored cave should show a selectable sensor signature without revealing its contour")
-	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "inspection_room_boundary_valid": room_boundary_ok, "cave_proximity_detection_valid": cave_detection_ok, "results": rows, "failures": failures}
+	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "inspection_room_boundary_valid": room_boundary_ok, "inspection_gallery_transition_valid": gallery_transition_ok, "cave_proximity_detection_valid": cave_detection_ok, "results": rows, "failures": failures}
 	DirAccess.make_dir_recursive_absolute("res://reports")
 	var file := FileAccess.open("res://reports/seed_validation_50.json", FileAccess.WRITE)
 	if file:
@@ -54,6 +64,45 @@ func _initialize() -> void:
 	for failure in failures:
 		push_error(failure)
 	quit(0 if failures.is_empty() else 1)
+
+func _analysis_gallery_transition_valid(world: Dictionary, requested_cave_id: int = -1, exit_index: int = 0) -> bool:
+	navigation_probe.set("world", world)
+	var cave_id: int = world.entry if requested_cave_id < 0 else requested_cave_id
+	var cave: Dictionary = world.caves[cave_id]
+	navigation_probe.set("current_cave_id", cave_id)
+	navigation_probe.set("selected_cave", cave_id)
+	navigation_probe.set("analysis_mode", true)
+	navigation_probe.set("inspection_corridor_id", -1)
+	navigation_probe.set("unit_position", cave.position)
+	navigation_probe.set("moving", false)
+	navigation_probe.set("dev_mode", false)
+	var revealed := PackedByteArray()
+	revealed.resize(world.terrain_mask.size())
+	revealed.fill(0)
+	navigation_probe.set("revealed_mask", revealed)
+	navigation_probe.set("discovered_exits", {})
+	navigation_probe.call("_scan_current_cave")
+	var exits: Array = navigation_probe.call("_visible_exits_for_cave", cave_id)
+	if exit_index >= exits.size():
+		return false
+	var exit_info: Dictionary = exits[exit_index]
+	var click_position: Vector2 = exit_info.position + exit_info.direction * float(exit_info.width) * 0.2
+	var order: Dictionary = navigation_probe.call("_resolve_order_target", click_position)
+	if order.is_empty() or int(order.get("corridor_id", -1)) != int(exit_info.corridor_id):
+		return false
+	var path: Array[Vector2] = navigation_probe.call("_path_for_order", order)
+	if path.is_empty():
+		return false
+	navigation_probe.set("inspection_corridor_id", int(order.corridor_id))
+	navigation_probe.set("move_path", path)
+	navigation_probe.set("selected_route", path.duplicate())
+	navigation_probe.set("move_target", path.back())
+	navigation_probe.set("moving", true)
+	for step in range(160):
+		navigation_probe.call("_process", 0.1)
+		if not bool(navigation_probe.get("analysis_mode")):
+			return int(navigation_probe.get("selected_cave")) == -1 and not navigation_probe.call("_point_inside_cave_id", navigation_probe.get("unit_position"), cave_id)
+	return false
 
 func _analysis_blocks_exit_without_perspective_change(world: Dictionary) -> bool:
 	navigation_probe.set("world", world)

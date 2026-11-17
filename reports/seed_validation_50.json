@@ -1,12 +1,13 @@
 {
 	"cave_proximity_detection_valid": true,
 	"failures": [],
-	"generator_version": "p0b-2",
+	"generator_version": "p0b-3",
+	"inspection_gallery_transition_valid": true,
 	"inspection_room_boundary_valid": true,
 	"passed": true,
 	"results": [
 		{
-			"canonical_hash": 3382519666,
+			"canonical_hash": 3925097714,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -29,7 +30,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 1853883579,
+			"canonical_hash": 2536654755,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -52,7 +53,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 3435403366,
+			"canonical_hash": 982559457,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -75,7 +76,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 2096183904,
+			"canonical_hash": 3850217224,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -98,7 +99,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 552567741,
+			"canonical_hash": 4204783005,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -121,7 +122,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 2783376871,
+			"canonical_hash": 3329058188,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -144,7 +145,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 55714433,
+			"canonical_hash": 3031215467,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -167,7 +168,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 1553087720,
+			"canonical_hash": 137366123,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -190,7 +191,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 1044596892,
+			"canonical_hash": 18420529,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -213,7 +214,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 674811,
+			"canonical_hash": 3046462489,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -236,7 +237,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 1611375125,
+			"canonical_hash": 3883876800,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -259,7 +260,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 3485591013,
+			"canonical_hash": 708939451,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -282,7 +283,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 515759900,
+			"canonical_hash": 2206513141,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -305,7 +306,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 1883540701,
+			"canonical_hash": 376068311,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -328,7 +329,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 912347704,
+			"canonical_hash": 2125110777,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -351,7 +352,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 1515863202,
+			"canonical_hash": 2187993416,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -374,7 +375,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 2041147160,
+			"canonical_hash": 3977771314,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -397,7 +398,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 4167114180,
+			"canonical_hash": 3471291006,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -420,7 +421,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 324272605,
+			"canonical_hash": 3691969281,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -443,7 +444,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 3519630672,
+			"canonical_hash": 3562546734,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -466,7 +467,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 3756293701,
+			"canonical_hash": 2251542419,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -489,7 +490,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 3506695791,
+			"canonical_hash": 1483156798,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -512,7 +513,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 1298638090,
+			"canonical_hash": 208591626,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -535,7 +536,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 1566903782,
+			"canonical_hash": 283688666,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -558,7 +559,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 995003941,
+			"canonical_hash": 804291864,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -581,7 +582,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 580998060,
+			"canonical_hash": 1148963565,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -604,7 +605,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 4182616228,
+			"canonical_hash": 3540139333,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -627,7 +628,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 3832269345,
+			"canonical_hash": 764051958,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -650,7 +651,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 4249240731,
+			"canonical_hash": 4063497477,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -673,7 +674,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 14061839,
+			"canonical_hash": 2457953674,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -696,7 +697,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 3485714418,
+			"canonical_hash": 1925765234,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -719,7 +720,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 3867861069,
+			"canonical_hash": 2265588814,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -742,7 +743,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 1084275369,
+			"canonical_hash": 2877999161,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -765,7 +766,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 385470092,
+			"canonical_hash": 2023340316,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -788,7 +789,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 1039268136,
+			"canonical_hash": 1440253667,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -811,7 +812,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 55848575,
+			"canonical_hash": 3885283729,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -834,7 +835,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 2007636000,
+			"canonical_hash": 2342539128,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -857,7 +858,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 3299884739,
+			"canonical_hash": 905299262,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -880,7 +881,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 37429057,
+			"canonical_hash": 928905302,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -903,7 +904,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 3821094602,
+			"canonical_hash": 238267011,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -926,7 +927,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 1916121323,
+			"canonical_hash": 1541216573,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -949,7 +950,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 2285389213,
+			"canonical_hash": 1404452023,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -972,7 +973,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 589117253,
+			"canonical_hash": 3590591646,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -995,7 +996,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 4156295741,
+			"canonical_hash": 1366767661,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -1018,7 +1019,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 4094417745,
+			"canonical_hash": 2197088408,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -1041,7 +1042,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 3381876486,
+			"canonical_hash": 4227773504,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -1064,7 +1065,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 2616437340,
+			"canonical_hash": 2588981707,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -1087,7 +1088,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 935275770,
+			"canonical_hash": 2607857959,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -1110,7 +1111,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 2021320513,
+			"canonical_hash": 2506130292,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -1133,7 +1134,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 215395098,
+			"canonical_hash": 1010398493,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,
@@ -1156,7 +1157,7 @@
 			"walkable_connected": true
 		},
 		{
-			"canonical_hash": 2671198865,
+			"canonical_hash": 361941276,
 			"cave_spawns_walkable": true,
 			"caves": 20,
 			"corridor_geometry_varied": true,

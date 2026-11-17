@@ -6,10 +6,11 @@ const WORLD_RECT := Rect2(0, 0, 2200, 1500)
 const MIN_DISTANCE := 205.0
 const CELL_SIZE := 10.0
 const GRID_SIZE := Vector2i(220, 150)
-const GENERATOR_VERSION := "p0b-2"
+const GENERATOR_VERSION := "p0b-3"
+const LAYOUT_SEED_VERSION := "p0b-2"
 
 static func _seed_for(seed_value: int, domain: String, index: int) -> int:
-	var text := "%d|%s|%d|%s" % [seed_value, GENERATOR_VERSION, index, domain]
+	var text := "%d|%s|%d|%s" % [seed_value, LAYOUT_SEED_VERSION, index, domain]
 	var hash_value: int = hash(text)
 	return hash_value & 0x7fffffff
 
@@ -137,11 +138,11 @@ static func _make_corridor(seed_value: int, corridor_id: int, cave_a_id: int, ca
 		var inverse := 1.0 - t
 		var point := inverse * inverse * inverse * start + 3.0 * inverse * inverse * t * control_a + 3.0 * inverse * t * t * control_b + t * t * t * finish
 		points.append(point)
-	var direction_a: Vector2 = (points[1] - points[0]).normalized()
-	var direction_b: Vector2 = (points[points.size() - 2] - points[points.size() - 1]).normalized()
+	var exit_a := _route_exit(cave_a, points, false)
+	var exit_b := _route_exit(cave_b, points, true)
 	var size_bias := (float(cave_a.size_class) + float(cave_b.size_class)) * 0.5
 	var width: float = rng.randf_range(24.0 + size_bias * 3.0, 36.0 + size_bias * 6.0)
-	return {"id": corridor_id, "a": cave_a_id, "b": cave_b_id, "points": points, "exit_a": _exit_position(cave_a, direction_a), "exit_b": _exit_position(cave_b, direction_b), "direction_a": direction_a, "direction_b": direction_b, "width": width}
+	return {"id": corridor_id, "a": cave_a_id, "b": cave_b_id, "points": points, "exit_a": exit_a.position, "exit_b": exit_b.position, "direction_a": exit_a.direction, "direction_b": exit_b.direction, "width": width}
 
 static func _build_obstacles(seed_value: int, caves: Array[Dictionary], corridors: Array[Dictionary]) -> Array[Dictionary]:
 	var obstacles: Array[Dictionary] = []
@@ -186,6 +187,22 @@ static func _exit_position(cave: Dictionary, direction: Vector2) -> Vector2:
 			break
 		last_inside = candidate
 	return last_inside
+
+static func _route_exit(cave: Dictionary, route: PackedVector2Array, reverse: bool) -> Dictionary:
+	var previous: Vector2 = route[route.size() - 1] if reverse else route[0]
+	var last_inside := previous
+	for step_index in range(1, route.size()):
+		var next: Vector2 = route[route.size() - 1 - step_index] if reverse else route[step_index]
+		var direction := (next - previous).normalized()
+		var steps := maxi(1, ceili(previous.distance_to(next) * 2.0))
+		for sample in range(1, steps + 1):
+			var candidate := previous.lerp(next, float(sample) / float(steps))
+			if not Geometry2D.is_point_in_polygon(candidate - cave.position, cave.contour):
+				return {"position": last_inside, "direction": direction}
+			last_inside = candidate
+		previous = next
+	var fallback_direction: Vector2 = (route[route.size() - 2] - route[route.size() - 1]).normalized() if reverse else (route[1] - route[0]).normalized()
+	return {"position": _exit_position(cave, fallback_direction), "direction": fallback_direction}
 
 static func _build_masks(caves: Array[Dictionary], corridors: Array[Dictionary], obstacles: Array[Dictionary]) -> Dictionary:
 	var mask := PackedByteArray()

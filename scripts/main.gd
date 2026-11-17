@@ -25,6 +25,7 @@ var move_target := Vector2.ZERO
 var moving := false
 var move_path: Array[Vector2] = []
 var selected_route: Array[Vector2] = []
+var inspection_corridor_id := -1
 var chained_cave_id := -1
 var chained_arrival := Vector2.ZERO
 var revealed_mask := PackedByteArray()
@@ -72,18 +73,6 @@ func _process(delta: float) -> void:
 			chained_cave_id = -1
 			if is_instance_valid(status_label):
 				status_label.text = "SURT D'INSPECCIÓ PER MOURE'T ENTRE SALES"
-		else:
-			var safe_path := _path_prefix_inside_cave(move_path, unit_position, selected_cave)
-			if safe_path.size() < move_path.size():
-				move_path = safe_path
-				chained_cave_id = -1
-				selected_route = safe_path.duplicate()
-				if move_path.is_empty():
-					moving = false
-				else:
-					move_target = move_path.back()
-				if is_instance_valid(status_label):
-					status_label.text = "SURT D'INSPECCIÓ PER TRAVESSAR LA SORTIDA"
 	if moving:
 		var remaining_distance := 145.0 * delta
 		while remaining_distance > 0.0 and not move_path.is_empty():
@@ -98,15 +87,19 @@ func _process(delta: float) -> void:
 				next_position = unit_position + difference / distance * remaining_distance
 				remaining_distance = 0.0
 			if analysis_mode and selected_cave == current_cave_id and not _point_inside_cave_id(next_position, selected_cave):
-				moving = false
-				move_target = unit_position
-				move_path.clear()
-				selected_route.clear()
-				chained_cave_id = -1
-				remaining_distance = 0.0
-				if is_instance_valid(status_label):
-					status_label.text = "SURT D'INSPECCIÓ PER TRAVESSAR LA SORTIDA"
-				break
+				var gallery: Dictionary = _inspection_gallery()
+				if gallery.is_empty() or not _point_inside_corridor(next_position, gallery):
+					moving = false
+					move_target = unit_position
+					move_path.clear()
+					selected_route.clear()
+					chained_cave_id = -1
+					remaining_distance = 0.0
+					break
+				var exit_position: Vector2 = gallery.exit_a if gallery.a == selected_cave else gallery.exit_b
+				if next_position.distance_to(exit_position) >= float(gallery.width) * 0.65:
+					unit_position = next_position
+					_return_to_map(1.1)
 			unit_position = next_position
 			if reaches_waypoint:
 				move_path.pop_front()
@@ -528,6 +521,36 @@ func _point_inside_connected_corridor(point: Vector2, cave: Dictionary) -> bool:
 					return true
 	return false
 
+func _inspection_gallery() -> Dictionary:
+	for corridor in world.corridors:
+		if corridor.id == inspection_corridor_id and (corridor.a == selected_cave or corridor.b == selected_cave):
+			return corridor
+	return {}
+
+func _point_inside_corridor(point: Vector2, corridor: Dictionary) -> bool:
+	var route: PackedVector2Array = corridor.points
+	for index in range(route.size() - 1):
+		var closest := Geometry2D.get_closest_point_to_segment(point, route[index], route[index + 1])
+		if closest.distance_to(point) <= float(corridor.width) * 0.6:
+			return true
+	return false
+
+func _visible_gallery_at(point: Vector2) -> Dictionary:
+	var nearest: Dictionary = {}
+	var nearest_distance := INF
+	for exit_info in _visible_exits_for_cave(selected_cave):
+		for corridor in world.corridors:
+			if corridor.id != exit_info.corridor_id:
+				continue
+			var centerline := _isometric_exit_stub(exit_info, corridor, world.caves[selected_cave])
+			for index in range(centerline.size() - 1):
+				var closest := Geometry2D.get_closest_point_to_segment(point, centerline[index], centerline[index + 1])
+				var distance := closest.distance_to(point)
+				if distance <= float(corridor.width) * 0.5 and distance < nearest_distance:
+					nearest_distance = distance
+					nearest = corridor
+	return nearest
+
 func _isometric_corridor_edges(centerline: PackedVector2Array, width: float) -> Dictionary:
 	var left_edge := PackedVector2Array()
 	var right_edge := PackedVector2Array()
@@ -722,6 +745,7 @@ func _new_world(value: int) -> void:
 	moving = false
 	move_path.clear()
 	selected_route.clear()
+	inspection_corridor_id = -1
 	chained_cave_id = -1
 	current_cave_id = world.entry
 	discovered_exits.clear()
@@ -778,9 +802,9 @@ func _input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed and not _over_ui(event.position):
 			var order := _resolve_order_target(_screen_to_world(event.position))
 			if not order.is_empty():
-				var target: Vector2 = order.position
-				var path := _find_path(unit_position, target)
+				var path := _path_for_order(order)
 				if not path.is_empty():
+					inspection_corridor_id = int(order.get("corridor_id", -1)) if analysis_mode else -1
 					chained_cave_id = int(order.cave_id)
 					chained_arrival = world.caves[chained_cave_id].position if chained_cave_id >= 0 else Vector2.ZERO
 					move_path = path
@@ -919,6 +943,7 @@ func _update_view_mode_ui() -> void:
 
 func _return_to_map(requested_zoom: float = 0.62) -> void:
 	analysis_mode = false
+	inspection_corridor_id = -1
 	selected_cave = -1
 	selected_cave_focus = Vector2.ZERO
 	selected_route.clear()
@@ -1027,7 +1052,61 @@ func _find_path(from: Vector2, to: Vector2) -> Array[Vector2]:
 		path.append(Vector2((float(cell_index % grid_size.x) + 0.5) * cell_size, (float(cell_index / grid_size.x) + 0.5) * cell_size))
 	return path
 
+func _path_for_order(order: Dictionary) -> Array[Vector2]:
+	var target: Vector2 = order.position
+	var corridor_id: int = int(order.get("corridor_id", -1))
+	if not analysis_mode or corridor_id < 0:
+		return _find_path(unit_position, target)
+	for exit_info in _visible_exits_for_cave(selected_cave):
+		if int(exit_info.corridor_id) != corridor_id:
+			continue
+		var inside: Vector2 = exit_info.position - exit_info.direction * 10.0
+		var approach := _path_prefix_inside_cave(_find_path(unit_position, inside), unit_position, selected_cave)
+		var approach_start: Vector2 = approach.back() if not approach.is_empty() else unit_position
+		if _path_prefix_inside_cave([inside], approach_start, selected_cave).is_empty() or not _segment_is_walkable(approach_start, inside):
+			return []
+		approach.append(inside)
+		var gallery: Dictionary = {}
+		for corridor in world.corridors:
+			if corridor.id == corridor_id:
+				gallery = corridor
+				break
+		if gallery.is_empty():
+			return []
+		var stub := _isometric_exit_stub(exit_info, gallery, world.caves[selected_cave])
+		if stub.size() < 3:
+			return []
+		for index in range(1, stub.size()):
+			if not _segment_is_walkable(stub[index - 1], stub[index]):
+				return []
+			approach.append(stub[index])
+		var continuation := _find_path(stub[stub.size() - 1], target)
+		if continuation.is_empty():
+			return []
+		approach.append_array(continuation)
+		return approach
+	return []
+
+func _segment_is_walkable(start: Vector2, finish: Vector2) -> bool:
+	var steps := maxi(1, ceili(start.distance_to(finish) / maxf(1.0, world.cell_size * 0.25)))
+	for step in range(steps + 1):
+		var point := start.lerp(finish, float(step) / float(steps))
+		var cell := Vector2i(floori(point.x / world.cell_size), floori(point.y / world.cell_size))
+		if cell.x < 0 or cell.x >= world.grid_size.x or cell.y < 0 or cell.y >= world.grid_size.y:
+			return false
+		var index: int = cell.y * world.grid_size.x + cell.x
+		if world.walkable_mask[index] == 0 or (not dev_mode and revealed_mask[index] == 0):
+			return false
+	return true
+
 func _resolve_order_target(point: Vector2) -> Dictionary:
+	if analysis_mode and selected_cave == current_cave_id:
+		var gallery := _visible_gallery_at(point)
+		if not gallery.is_empty():
+			var destination: int = gallery.b if gallery.a == current_cave_id else gallery.a
+			var arrival := _arrival_point(destination, gallery.id)
+			if not _find_path(unit_position, arrival).is_empty():
+				return {"position": arrival, "cave_id": -1, "corridor_id": gallery.id}
 	# A click inside a revealed neighboring room is a room movement order,
 	# even when the small room lies close to its connecting mouth.
 	var containing_cave := -1
