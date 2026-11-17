@@ -34,7 +34,6 @@ var last_revealed_cell := Vector2i(-1, -1)
 var current_cave_id := -1
 var discovered_exits: Dictionary = {}
 var cave_floor_textures: Dictionary = {}
-var visited_caves: Dictionary = {}
 var show_graph := true
 var show_contours := true
 var show_route := true
@@ -121,7 +120,9 @@ func _process(delta: float) -> void:
 			selected_route = move_path.duplicate()
 		var current_cell := Vector2i(floori(unit_position.x / world.cell_size), floori(unit_position.y / world.cell_size))
 		if current_cell != last_revealed_cell:
-			_reveal_around(unit_position, 5)
+			var reveal_cave_id := _cave_at_position(unit_position)
+			var reveal_radius := 3 if reveal_cave_id >= 0 and not explored_caves.has(reveal_cave_id) else 5
+			_reveal_around(unit_position, reveal_radius)
 		_update_current_cave()
 		_discover_exit_near_unit()
 		_detect_caves_near_unit()
@@ -207,7 +208,7 @@ func _draw_isometric_room() -> void:
 		return
 	var cave: Dictionary = world.caves[selected_cave]
 	var contour: PackedVector2Array = cave.contour
-	var room_is_known: bool = explored_caves.has(selected_cave) or visited_caves.has(selected_cave)
+	var room_is_known: bool = explored_caves.has(selected_cave)
 	var local_bounds := Rect2(contour[0], Vector2.ZERO)
 	for point in contour:
 		local_bounds = local_bounds.expand(point)
@@ -238,7 +239,7 @@ func _draw_isometric_room() -> void:
 		_draw_isometric_explorer(unit_position)
 
 func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int, max_y: int) -> void:
-	if explored_caves.has(cave.id) or visited_caves.has(cave.id):
+	if explored_caves.has(cave.id):
 		_draw_textured_cave_floor(cave)
 		return
 	var terrain: PackedByteArray = world.terrain_mask
@@ -754,10 +755,8 @@ func _new_world(value: int) -> void:
 	discovered_exits.clear()
 	cave_floor_textures.clear()
 	explored_caves.clear()
-	visited_caves.clear()
 	detected_caves.clear()
 	explored_caves[world.entry] = true
-	visited_caves[world.entry] = true
 	revealed_mask.resize(world.terrain_mask.size())
 	revealed_mask.fill(0)
 	last_revealed_cell = Vector2i(-1, -1)
@@ -1314,7 +1313,6 @@ func _update_current_cave() -> void:
 			if current_cave_id != cave.id:
 				current_cave_id = cave.id
 				if not analysis_mode and inspect_on_cave_arrival:
-					visited_caves[cave.id] = true
 					selected_cave = cave.id
 					selected_cave_focus = cave.position
 					analysis_mode = true
@@ -1328,6 +1326,12 @@ func _update_current_cave() -> void:
 				_update_map_stats()
 				_update_scan_availability()
 			return
+
+func _cave_at_position(position: Vector2) -> int:
+	for cave in world.caves:
+		if Geometry2D.is_point_in_polygon(position - cave.position, cave.contour):
+			return cave.id
+	return -1
 
 func _detect_caves_near_unit() -> void:
 	if world.is_empty():

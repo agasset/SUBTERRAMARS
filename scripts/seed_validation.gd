@@ -77,7 +77,6 @@ func _analysis_gallery_transition_valid(world: Dictionary, requested_cave_id: in
 	navigation_probe.set("moving", false)
 	navigation_probe.set("dev_mode", false)
 	navigation_probe.set("explored_caves", {cave_id: true})
-	navigation_probe.set("visited_caves", {cave_id: true})
 	var revealed := PackedByteArray()
 	revealed.resize(world.terrain_mask.size())
 	revealed.fill(0)
@@ -114,8 +113,19 @@ func _analysis_gallery_transition_valid(world: Dictionary, requested_cave_id: in
 			saw_map_mode = true
 		elif saw_map_mode and int(navigation_probe.get("selected_cave")) == destination_id:
 			var explored: Dictionary = navigation_probe.get("explored_caves")
-			var visited: Dictionary = navigation_probe.get("visited_caves")
-			return navigation_probe.call("_point_inside_cave_id", navigation_probe.get("unit_position"), destination_id) and visited.has(destination_id) and not explored.has(destination_id)
+			var destination: Dictionary = world.caves[destination_id]
+			var revealed_mask: PackedByteArray = navigation_probe.get("revealed_mask")
+			var visible_cells := 0
+			var room_cells := 0
+			for y in range(world.grid_size.y):
+				for x in range(world.grid_size.x):
+					var cell_index: int = y * world.grid_size.x + x
+					var cell_center := Vector2((float(x) + 0.5) * world.cell_size, (float(y) + 0.5) * world.cell_size)
+					if world.terrain_mask[cell_index] == 1 and Geometry2D.is_point_in_polygon(cell_center - destination.position, destination.contour):
+						room_cells += 1
+						if revealed_mask[cell_index] == 1:
+							visible_cells += 1
+			return navigation_probe.call("_point_inside_cave_id", navigation_probe.get("unit_position"), destination_id) and not explored.has(destination_id) and visible_cells > 0 and visible_cells < room_cells
 	return false
 
 func _analysis_blocks_exit_without_perspective_change(world: Dictionary) -> bool:
