@@ -226,10 +226,11 @@ func _draw_isometric_room() -> void:
 		draw_colored_polygon(known_contour, Color("432e2c"))
 	_draw_isometric_floor(cave, min_cell_x, max_cell_x, min_cell_y, max_cell_y)
 	if room_is_known:
-		# Draw the passage first, then the room's cut walls over its inner edge.
-		# This makes the corridor emerge through the doorway instead of sitting
-		# underneath a continuous wall strip.
+		# The tunnel floor is merged with this cave's floor polygon. Draw its
+		# details afterward so rocks remain on top of the shared ground plane.
 		_draw_isometric_corridors(cave)
+		if explored_caves.has(cave.id):
+			_draw_procedural_rock_details(cave)
 		_draw_isometric_walls(cave)
 		_draw_isometric_contour(cave)
 	elif detected_caves.has(selected_cave):
@@ -242,8 +243,8 @@ func _draw_isometric_room() -> void:
 
 func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int, max_y: int) -> void:
 	if explored_caves.has(cave.id):
-		_draw_textured_cave_floor(cave)
-		_draw_procedural_rock_details(cave)
+		if _visible_exits_for_cave(cave.id).is_empty():
+			_draw_textured_cave_floor(cave)
 		return
 	var terrain: PackedByteArray = world.terrain_mask
 	var revealed: PackedByteArray = revealed_mask
@@ -272,14 +273,14 @@ func _draw_textured_cave_floor(cave: Dictionary) -> void:
 	var screen_points := PackedVector2Array()
 	var uvs := PackedVector2Array()
 	var colors := PackedColorArray()
-	var bounds := Rect2(contour[0], Vector2.ZERO)
-	for point in contour:
-		bounds = bounds.expand(point)
 	for point in contour:
 		screen_points.append(_world_to_screen(cave.position + point))
-		uvs.append(Vector2((point.x - bounds.position.x) / maxf(bounds.size.x, 1.0), (point.y - bounds.position.y) / maxf(bounds.size.y, 1.0)))
+		uvs.append((cave.position + point) / 256.0)
 		colors.append(Color.WHITE)
+	var previous_repeat := texture_repeat
+	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	draw_polygon(screen_points, colors, uvs, _get_cave_floor_texture(cave.id))
+	texture_repeat = previous_repeat
 
 func _get_cave_floor_texture(cave_id: int) -> Texture2D:
 	if cave_floor_textures.has(cave_id):
@@ -418,9 +419,12 @@ func _draw_isometric_contour(cave: Dictionary) -> void:
 			draw_line(_world_to_screen(a.lerp(b, cursor)), _world_to_screen(b), Color("805043"), maxf(1.2, zoom_level * 0.3), true)
 
 func _draw_isometric_corridors(cave: Dictionary) -> void:
-	# Render a discovered exit as the actual passage leaving the room, not as a
-	# map-style dot. The passage uses the same generated path and reveal mask as
-	# navigation; the far room stays hidden behind its unrevealed contour.
+	# Extend the cave footprint through its known exits, then draw the combined
+	# coplanar surface once with the same world-anchored floor texture.
+	var combined_shapes: Array[PackedVector2Array] = [PackedVector2Array()]
+	for point in cave.contour:
+		combined_shapes[0].append(cave.position + point)
+	var exposed_edges: Array[Dictionary] = []
 	for exit_info in _visible_exits_for_cave(cave.id):
 		var corridor: Dictionary = {}
 		for candidate in world.corridors:
@@ -431,7 +435,40 @@ func _draw_isometric_corridors(cave: Dictionary) -> void:
 			continue
 		var centerline := _isometric_exit_stub(exit_info, corridor, cave)
 		if centerline.size() >= 2:
-			_draw_isometric_corridor_mesh(centerline, float(corridor.width))
+			var edges := _isometric_corridor_edges(centerline, float(corridor.width))
+			if edges.is_empty():
+				continue
+			var merged_shapes: Array[PackedVector2Array] = []
+			for shape in combined_shapes:
+				var unions := Geometry2D.merge_polygons(shape, edges.floor)
+				if unions.is_empty():
+					merged_shapes.append(shape)
+					merged_shapes.append(edges.floor)
+				else:
+					merged_shapes.append_array(unions)
+			combined_shapes = merged_shapes
+			exposed_edges.append(edges)
+	if exposed_edges.is_empty():
+		_draw_textured_cave_floor(cave)
+		return
+	_draw_world_textured_floor_shapes(combined_shapes, cave.id)
+	for edges in exposed_edges:
+		_draw_isometric_corridor_edges(edges)
+
+func _draw_world_textured_floor_shapes(shapes: Array[PackedVector2Array], cave_id: int) -> void:
+	var texture := _get_cave_floor_texture(cave_id)
+	var previous_repeat := texture_repeat
+	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+	for shape in shapes:
+		var screen_shape := PackedVector2Array()
+		var uvs := PackedVector2Array()
+		var colors := PackedColorArray()
+		for world_point in shape:
+			screen_shape.append(_world_to_screen(world_point))
+			uvs.append(world_point / 256.0)
+			colors.append(Color.WHITE)
+		draw_polygon(screen_shape, colors, uvs, texture)
+	texture_repeat = previous_repeat
 
 func _isometric_exit_stub(exit_info: Dictionary, corridor: Dictionary, cave: Dictionary) -> PackedVector2Array:
 	# Start slightly inside the room so the corridor floor overlaps the cave
@@ -507,7 +544,7 @@ func _point_inside_connected_corridor(point: Vector2, cave: Dictionary) -> bool:
 					return true
 	return false
 
-func _draw_isometric_corridor_mesh(centerline: PackedVector2Array, width: float) -> void:
+func _isometric_corridor_edges(centerline: PackedVector2Array, width: float) -> Dictionary:
 	var left_edge := PackedVector2Array()
 	var right_edge := PackedVector2Array()
 	for index in range(centerline.size()):
@@ -525,17 +562,18 @@ func _draw_isometric_corridor_mesh(centerline: PackedVector2Array, width: float)
 		left_edge.append(centerline[index] + normal)
 		right_edge.append(centerline[index] - normal)
 	if left_edge.size() < 2:
-		return
-	# A corridor floor is a patch on the same projected ground plane as the room.
-	# Do not extrude it into a raised slab: the room walls provide the depth cue.
+		return {}
 	var floor_shape := PackedVector2Array()
 	for point in left_edge:
-		floor_shape.append(_world_to_screen(point))
+		floor_shape.append(point)
 	for index in range(right_edge.size() - 1, -1, -1):
-		floor_shape.append(_world_to_screen(right_edge[index]))
-	draw_colored_polygon(floor_shape, Color("493431"))
-	# Keep the mouth invisible while it overlaps the cave floor; outline only
-	# the exposed tunnel edges beyond the room threshold, in the floor plane.
+		floor_shape.append(right_edge[index])
+	return {"floor": floor_shape, "left": left_edge, "right": right_edge}
+
+func _draw_isometric_corridor_edges(edges: Dictionary) -> void:
+	# The edge strokes start beyond the room mouth and stay on the ground plane.
+	var left_edge: PackedVector2Array = edges.left
+	var right_edge: PackedVector2Array = edges.right
 	var exposed_left := PackedVector2Array()
 	var exposed_right := PackedVector2Array()
 	for index in range(2, left_edge.size()):
