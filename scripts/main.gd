@@ -1310,7 +1310,123 @@ func _find_path(from: Vector2, to: Vector2) -> Array[Vector2]:
 	for index in range(1, reversed_path.size()):
 		var cell_index: int = reversed_path[index]
 		path.append(Vector2((float(cell_index % grid_size.x) + 0.5) * cell_size, (float(cell_index / grid_size.x) + 0.5) * cell_size))
-	return path
+	return _follow_corridor_centerlines(path)
+
+func _follow_corridor_centerlines(path: Array[Vector2]) -> Array[Vector2]:
+	if path.size() < 3 or world.is_empty():
+		return path
+	var corridor_at := PackedInt32Array()
+	corridor_at.resize(path.size())
+	corridor_at.fill(-1)
+	var distance_at := PackedFloat32Array()
+	distance_at.resize(path.size())
+	distance_at.fill(INF)
+	for corridor in world.corridors:
+		var route: PackedVector2Array = corridor.points
+		var capture_distance: float = float(corridor.width) * 0.5 + world.cell_size * 0.6
+		for path_index in range(path.size()):
+			var distance := _distance_to_polyline(path[path_index], route)
+			if distance <= capture_distance and distance < distance_at[path_index]:
+				distance_at[path_index] = distance
+				corridor_at[path_index] = int(corridor.id)
+	var result: Array[Vector2] = []
+	var index := 0
+	while index < path.size():
+		var corridor_id: int = corridor_at[index]
+		if corridor_id < 0:
+			_append_path_point(result, path[index])
+			index += 1
+			continue
+		var run_end := index
+		while run_end + 1 < path.size() and corridor_at[run_end + 1] == corridor_id:
+			run_end += 1
+		var corridor: Dictionary = _corridor_by_id(corridor_id)
+		var replacement: Array[Vector2] = []
+		if run_end > index:
+			replacement = _route_span_on_corridor(path[index], path[run_end], corridor)
+		if replacement.is_empty():
+			for fallback_index in range(index, run_end + 1):
+				_append_path_point(result, path[fallback_index])
+		else:
+			for point in replacement:
+				_append_path_point(result, point)
+		index = run_end + 1
+	return result
+
+func _route_span_on_corridor(start: Vector2, finish: Vector2, corridor: Dictionary) -> Array[Vector2]:
+	if corridor.is_empty():
+		return []
+	var route: PackedVector2Array = corridor.points
+	var from_projection := _project_to_polyline(start, route)
+	var to_projection := _project_to_polyline(finish, route)
+	var max_projection_distance: float = float(corridor.width) * 0.5 + world.cell_size
+	if float(from_projection.distance) > max_projection_distance or float(to_projection.distance) > max_projection_distance:
+		return []
+	var forward: bool = int(from_projection.segment) < int(to_projection.segment) or (int(from_projection.segment) == int(to_projection.segment) and float(from_projection.t) <= float(to_projection.t))
+	var oriented := route
+	var from_segment: int = int(from_projection.segment)
+	var to_segment: int = int(to_projection.segment)
+	var from_point: Vector2 = from_projection.point
+	var to_point: Vector2 = to_projection.point
+	if not forward:
+		oriented = PackedVector2Array()
+		for point_index in range(route.size() - 1, -1, -1):
+			oriented.append(route[point_index])
+		from_projection = _project_to_polyline(start, oriented)
+		to_projection = _project_to_polyline(finish, oriented)
+		from_segment = int(from_projection.segment)
+		to_segment = int(to_projection.segment)
+		from_point = from_projection.point
+		to_point = to_projection.point
+	if from_segment > to_segment:
+		return []
+	var replacement: Array[Vector2] = [start]
+	if not _segment_is_walkable(start, from_point):
+		return []
+	_append_path_point(replacement, from_point)
+	for route_index in range(from_segment + 1, to_segment + 1):
+		if not _segment_is_walkable(replacement.back(), oriented[route_index]):
+			return []
+		_append_path_point(replacement, oriented[route_index])
+	if not _segment_is_walkable(replacement.back(), to_point) or not _segment_is_walkable(to_point, finish):
+		return []
+	_append_path_point(replacement, to_point)
+	_append_path_point(replacement, finish)
+	return replacement
+
+func _project_to_polyline(point: Vector2, route: PackedVector2Array) -> Dictionary:
+	var nearest_point := Vector2.ZERO
+	var nearest_segment := 0
+	var nearest_t := 0.0
+	var nearest_distance := INF
+	for segment in range(route.size() - 1):
+		var start: Vector2 = route[segment]
+		var difference: Vector2 = route[segment + 1] - start
+		var weight := clampf((point - start).dot(difference) / maxf(difference.length_squared(), 0.001), 0.0, 1.0)
+		var candidate := start + difference * weight
+		var distance := point.distance_to(candidate)
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest_point = candidate
+			nearest_segment = segment
+			nearest_t = weight
+	return {"point": nearest_point, "segment": nearest_segment, "t": nearest_t, "distance": nearest_distance}
+
+func _distance_to_polyline(point: Vector2, route: PackedVector2Array) -> float:
+	var distance := INF
+	for segment in range(route.size() - 1):
+		distance = minf(distance, Geometry2D.get_closest_point_to_segment(point, route[segment], route[segment + 1]).distance_to(point))
+	return distance
+
+func _corridor_by_id(corridor_id: int) -> Dictionary:
+	for corridor in world.corridors:
+		if int(corridor.id) == corridor_id:
+			return corridor
+	return {}
+
+func _append_path_point(path: Array[Vector2], point: Vector2) -> void:
+	if path.is_empty() or path.back().distance_squared_to(point) > 0.01:
+		path.append(point)
 
 func _path_for_order(order: Dictionary) -> Array[Vector2]:
 	var target: Vector2 = order.position

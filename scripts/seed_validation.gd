@@ -44,6 +44,7 @@ func _initialize() -> void:
 	var gallery_world := Generator.generate(134027)
 	var gallery_transition_ok := _analysis_gallery_transition_valid(gallery_world)
 	var intermediate_room_skip_ok := _map_order_skips_intermediate_rooms(gallery_world)
+	var gallery_movement_tracks_art_ok := _movement_follows_gallery_line(gallery_world)
 	var six_exit_room_count := 0
 	for corridor in gallery_world.corridors:
 		if corridor.a == 4 or corridor.b == 4:
@@ -54,13 +55,15 @@ func _initialize() -> void:
 		failures.append("a gallery movement order should walk out of inspection and continue on the map")
 	if not intermediate_room_skip_ok:
 		failures.append("a map movement order should pass through scanned intermediate rooms and inspect only its clicked destination")
+	if not gallery_movement_tracks_art_ok:
+		failures.append("player movement should follow the generated gallery centerline instead of a grid zigzag")
 	var cave_detection_ok := _caves_detected_by_proximity(Generator.generate(134027))
 	if not cave_detection_ok:
 		failures.append("approaching an unexplored cave should show a selectable sensor signature without revealing its contour")
 	var surface_entry_ok := _surface_entry_valid(Generator.generate(134027))
 	if not surface_entry_ok:
 		failures.append("new worlds should start at the level 0 base and descend through its hatch to the level 1 entry cave")
-	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "inspection_room_boundary_valid": room_boundary_ok, "inspection_gallery_transition_valid": gallery_transition_ok, "map_skips_scanned_intermediate_rooms": intermediate_room_skip_ok, "cave_proximity_detection_valid": cave_detection_ok, "surface_entry_valid": surface_entry_ok, "results": rows, "failures": failures}
+	var report := {"generator_version": Generator.GENERATOR_VERSION, "sample_size": rows.size(), "passed": failures.is_empty(), "inspection_room_boundary_valid": room_boundary_ok, "inspection_gallery_transition_valid": gallery_transition_ok, "map_skips_scanned_intermediate_rooms": intermediate_room_skip_ok, "player_follows_gallery_centerline": gallery_movement_tracks_art_ok, "cave_proximity_detection_valid": cave_detection_ok, "surface_entry_valid": surface_entry_ok, "results": rows, "failures": failures}
 	DirAccess.make_dir_recursive_absolute("res://reports")
 	var file := FileAccess.open("res://reports/seed_validation_50.json", FileAccess.WRITE)
 	if file:
@@ -203,6 +206,26 @@ func _map_order_skips_intermediate_rooms(world: Dictionary) -> bool:
 		if not bool(navigation_probe.get("moving")):
 			break
 	return saw_intermediate and int(navigation_probe.get("current_cave_id")) == chosen_target and bool(navigation_probe.get("analysis_mode")) and int(navigation_probe.get("selected_cave")) == chosen_target
+
+func _movement_follows_gallery_line(world: Dictionary) -> bool:
+	navigation_probe.set("world", world)
+	navigation_probe.set("dev_mode", true)
+	for corridor in world.corridors:
+		var cave_a: Dictionary = world.caves[corridor.a]
+		var cave_b: Dictionary = world.caves[corridor.b]
+		var path: Array[Vector2] = navigation_probe.call("_find_path", cave_a.position, cave_b.position)
+		if path.is_empty():
+			continue
+		var aligned_gallery_points := 0
+		for gallery_point in corridor.points:
+			var nearest_distance := INF
+			for path_point in path:
+				nearest_distance = minf(nearest_distance, path_point.distance_to(gallery_point))
+			if nearest_distance <= 1.5:
+				aligned_gallery_points += 1
+		if aligned_gallery_points >= ceili(float(corridor.points.size()) * 0.5):
+			return true
+	return false
 
 func _analysis_blocks_exit_without_perspective_change(world: Dictionary) -> bool:
 	navigation_probe.set("world", world)
@@ -435,18 +458,23 @@ func _navigation_path_valid(world: Dictionary) -> bool:
 	var path: Array = navigation_probe.call("_find_path", entry_position, target_position)
 	if path.is_empty():
 		return false
-	var grid_size: Vector2i = world.grid_size
 	var mask: PackedByteArray = world.walkable_mask
-	var previous_cell := Vector2i(floori(entry_position.x / world.cell_size), floori(entry_position.y / world.cell_size))
+	var previous_point := entry_position
 	for point in path:
+		if not _segment_is_walkable_in_mask(previous_point, point, world, mask):
+			return false
+		previous_point = point
+	return true
+
+func _segment_is_walkable_in_mask(start: Vector2, finish: Vector2, world: Dictionary, mask: PackedByteArray) -> bool:
+	var steps := maxi(1, ceili(start.distance_to(finish) / maxf(1.0, world.cell_size * 0.25)))
+	for step in range(steps + 1):
+		var point := start.lerp(finish, float(step) / float(steps))
 		var cell := Vector2i(floori(point.x / world.cell_size), floori(point.y / world.cell_size))
-		if cell.x < 0 or cell.x >= grid_size.x or cell.y < 0 or cell.y >= grid_size.y:
+		if cell.x < 0 or cell.x >= world.grid_size.x or cell.y < 0 or cell.y >= world.grid_size.y:
 			return false
-		if mask[cell.y * grid_size.x + cell.x] == 0:
+		if mask[cell.y * world.grid_size.x + cell.x] == 0:
 			return false
-		if absi(cell.x - previous_cell.x) + absi(cell.y - previous_cell.y) != 1:
-			return false
-		previous_cell = cell
 	return true
 
 func _obstacles_blocked(world: Dictionary) -> bool:

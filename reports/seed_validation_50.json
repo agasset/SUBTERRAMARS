@@ -6,6 +6,7 @@
 	"inspection_room_boundary_valid": true,
 	"map_skips_scanned_intermediate_rooms": true,
 	"passed": true,
+	"player_follows_gallery_centerline": true,
 	"results": [
 		{
 			"canonical_hash": 821021817,
