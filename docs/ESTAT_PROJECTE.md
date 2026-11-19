@@ -1,5 +1,41 @@
 # Estat de traspàs
 
+## Coves oxidades (nivells −1 a −3)
+
+El primer bioma és jugable fins al −3. L’inventari inicial inclou dues escales plegables, visibles a la barra d’equip. Els primers descensos requereixen una escala per accés i els trajectes posteriors fan servir ascensors. Les escales addicionals costen dos materials. Si només hi ha una veta en una sala veïna dins la cobertura inicial, s’hi afegeix una veta a la sala d’entrada del −1. El retorn conserva la generació i l’estat de cada nivell. Godot amb OpenGL ha verificat els dos descensos amb les escales inicials i el comptador a zero en arribar al −3.
+
+La llavor determina la distribució de flora i fauna i les espècies de cada sala, amb la molsa fèrrica i l’escarabat fèrric afegits al bioma. Godot ha verificat 50 llavors, 50 combinacions biològiques diferents al −3, els accessos en els dos sentits, el cost en escales i la disponibilitat de material inicial. La prova automatitzada situa l’explorador als accessos. Queda pendent una expedició completa a peu.
+
+L’oxigen esgotat sense reserves resta vuit punts de vida per segon. Les botes trencades resten vida segons la distància caminada. Una prova headless ha verificat el desgast en moviment, l’ús automàtic de la reserva i la mort per falta d’oxigen quan la vida arriba a zero.
+
+La pols d’un despreniment s’assenta però les pedres queden al túnel fins que es retiren. Si l’explorador és a dins quan cau la galeria, pot perdre 25 punts de vida i 12 d’integritat del vestit. La casella Vida inclou el botó de farmaciola. Se’n dona una en començar, cada ús cura fins a 35 punts i al taller en costen dos materials. Una prova amb Godot i OpenGL ha verificat la ferida, la cura, les pedres persistents en canviar de nivell, la neteja i la mort al 0% de vida.
+
+Els despreniments apareixen dins del túnel. En vista isomètrica l’explorador s’hi acosta i espera davant de les pedres. Clicar-les gasta cinc punts d’integritat de l’eina de mineria i permet reprendre el trajecte. L’espera també acaba quan expira l’incident al cap de dotze segons.
+
+Les ordres directes d’entrada a una galeria poden activar un despreniment aleatori de quatre segons. La pols marca les boques revelades i la primera exposició resta 12 punts d’integritat del vestit. L’incident expira automàticament. Godot en mode headless ha verificat el desgast únic i l’expiració. La comprovació visual de la pols queda pendent.
+
+Els materials que l’explorador porta quan mor queden en una caixa al lloc de l’incident. Mentre hi hagi caixes pendents, el reinici torna a generar el nivell amb la mateixa llavor i reinicia l’equip i l’exploració. Godot en mode headless ha verificat que la caixa es conserva després del reinici i es recull una sola vegada. Les caixes es mantenen durant la sessió actual.
+
+La base de superfície té un nou dibuix 2D amb relleu marcià, mòduls amb volum, plaques solars en perspectiva i una plataforma il·luminada al voltant de l’ascensor. Verificat amb captura de Godot i clic directe a l’ascensor per iniciar el descens.
+
+El clic dret en una altra sala visitada, des de la vista isomètrica, ordena un recorregut per galeries completades. Les sales intermèdies pendents d’explorar encara provoquen una aturada. Godot amb OpenGL ha verificat el retorn a la sala anterior amb un clic dret i la llum del casc apagada.
+
+La vista isomètrica conserva les sales visitades, amb el terra descobert de cadascuna, i els trams de galeria recorreguts del nivell actual. La prova de trànsit amb Godot i OpenGL continua passant amb el dibuix del nivell ampliat.
+
+El trajecte isomètric dibuixa la galeria i el terra revelat de les dues sales amb la mateixa projecció. La càmera segueix l’explorador i manté el zoom quan arriba per la boca de la galeria. S’ha retirat el tall a negre entre vistes. Una prova amb Godot i OpenGL ha verificat el clic de sortida, el trànsit en vista isomètrica i l’arribada a la boca amb el mateix zoom.
+
+Les icones de la sala isomètrica apareixen sota el percentatge. Les galeries recorregudes de punta a punta tenen llums i es poden tornar a travessar amb el casc apagat si hi ha senyal. Una prova amb Godot i OpenGL ha verificat que un tram desconegut queda bloquejat en foscor i que el mateix tram esdevé transitable quan la galeria consta com a recorreguda.
+
+El primer accés al nivell −2 es mostra com un forat i requereix una escala plegable. La partida comença amb una escala i se’n poden comprar al taller per dos materials. El primer descens gasta l’escala i els trajectes posteriors fan servir l’ascensor. Godot en mode headless ha verificat la compra, el bloqueig sense escala, el primer descens, la pujada i el segon descens. La prova visual queda pendent.
+
+L’equip inicial permet escanejar flora i fauna. Les sales es completen explorant-les i es revelen del tot al 90%. Els accessos inicials de nivell es continuen revelant en arribar-hi. L’escaneig territorial manual queda reservat com a possible millora futura. Godot ha carregat el canvi en mode headless.
+
+## Fi de partida
+
+La versió actual aplica la decisió posterior de reiniciar de zero quan mor l’explorador. L’oxigen esgotat sense reserves, el vestit o les botes al 0% i l’esgotament de les bateries fora de la sala d’entrada activen l’avís de fi de partida. L’avís mostra la causa i atura la simulació. En confirmar-lo es genera un món amb una llavor nova i es torna a la superfície amb l’equip inicial.
+
+Godot 4.7.2 en mode headless ha verificat les quatre causes, el missatge corresponent i el reinici amb llavor nova i inventari inicial. Queda pendent la comprovació visual en partida.
+
 9 de novembre de 2026 · Disseny 1.4
 
 ## Existeix
@@ -99,7 +135,8 @@ Les galeries descobertes ara es dibuixen a qualsevol nivell de zoom i continuen 
 
 ## Actualització de vista prèvia de sala connectada
 
-En escanejar una cova, també es pinten les cel·les inicials revelades dins les sales veïnes connectades, a continuació del tram de galeria. El marc de càmera prioritza la cova actual i la sala veïna més propera perquè el jugador pugui percebre la continuïtat. No es dibuixa el contorn de la sala inexplorada i el seu centre continua ocult. Verificació: bateria de 50 llavors aprovada; cada sortida escanejada revela el punt d'arribada però no el centre de la sala. Captura OpenGL regenerada a eports/prototip_screenshot.png.
+En escanejar una cova, també es pinten les cel·les inicials revelades dins les sales veïnes connectades, a continuació del tram de galeria. El marc de càmera prioritza la cova actual i la sala veïna més propera perquè el jugador pugui percebre la continuïtat. No es dibuixa el contorn de la sala inexplorada i el seu centre continua ocult. Verificació: bateria de 50 llavors aprovada; cada sortida escanejada revela el punt d'arribada però no el centre de la sala. Captura OpenGL regenerada a
+eports/prototip_screenshot.png.
 
 
 ## Actualització dels contorns revelats
@@ -272,6 +309,36 @@ Una selecció de sales determinada per la llavor conté la falguera de llum, inc
 
 ## Reorganització de la interfície
 
+- Totes les fitxes inferiors reserven una franja de la mateixa alçada per a les icones, amb els valors a sobre. Verificats a Godot l’alineació i el clic dels recanvis.
+
+- Les icones d’acció romanen visibles a les fitxes d’equip i s’atenuen quan l’acció no és disponible. Els botons de recanvi mostren una icona i la quantitat. Verificat a Godot que la mostra de fauna continua bloquejada i els recanvis es poden activar quan correspon.
+
+- Les fitxes inferiors són més altes i integren els controls d’equip. Dipòsit d’oxigen i Llum del casc inclouen els recanvis. Les accions de fotografia i mostra són dins d’Escàner biològic, i les icones de mineria i balisa són a les fitxes corresponents. Verificada la disposició a Godot.
+
+- En seleccionar una troballa, les icones de fotografia i mostra apareixen sobre la fitxa Escàner biològic. La fauna només mostra la càmera i les accions es desbloquegen en completar l’escaneig. Verificat a Godot el posicionament i la selecció de flora i fauna.
+
+- La fitxa de balises és a Equip i permet col·locar o recuperar una balisa a la sala on és l’explorador. Verificat a Godot des de la vista de sala i el mapa, inclòs el bloqueig de les balises que ja s’han fet servir.
+
+- Els avisos de consum i desgast s’activen en arribar al 10% d’oxigen, càrrega del casc, vestit, botes, eina de mineria o escàner. Indiquen l’acció disponible. Les fitxes de reserves d’oxigen i de bateries del casc permeten utilitzar un recanvi amb un clic. Verificat a Godot el llindar i la reposició manual.
+
+- El progrés del nivell es mostra en sis fitxes a la fila superior, amb percentatges i barres horitzontals segmentades. La mateixa fila és visible al mapa i a la sala. Disposició comprovada amb captures de Godot.
+
+- La vista isomètrica té un botó per centrar la càmera en l’explorador. El canvi entre sala i túnel es produeix amb l’escena completament fosca durant 120 ms. Verificats a Godot el centrat i l’enfosquiment total als dos canvis de càmera.
+
+- Quan augmenta un recompte, la fitxa corresponent de la fila inferior s’il·lumina amb un +N breu. Si hi ha dos guanys seguits mentre l’avís és visible, s’hi mostra la suma. Verificat a Godot amb minerals, punts de recerca i mostres.
+
+- La vista isomètrica s’enfosqueix gradualment a les dues boques de la galeria i recupera la claror en entrar a la sala. Verificat a Godot que el feix i l’explorador es veuen durant la transició.
+
+- Si falta llum per entrar en una galeria o explorar terreny desconegut, apareix un avís al punt del clic i es ressalta la fitxa de la llum del casc. El missatge indica si cal encendre-la, canviar la bateria o si no queda cap recanvi.
+
+- Travessar una galeria requereix llum del casc. Des de la sala, la càmera segueix l’explorador en vista isomètrica pel túnel i enfoca l’arribada just dins de la sala, per la boca de la galeria. Verificat amb clic a la galeria, apagada i represa de la llum, i comprovació del punt d’arribada.
+
+- La fitxa de l’eina activa s’il·lumina de baix a dalt segons el progrés de l’extracció o l’escaneig biològic. El ressalt es manté un instant en completar l’acció. Verificat a Godot el progrés intermedi, la finalització i la cancel·lació.
+
+- La fitxa Llum del casc de la fila inferior funciona com a interruptor i es ressalta en ambre quan és encesa. Verificat amb clics sobre la fitxa a Godot.
+
+- Els indicadors duplicats del panell esquerre passen a consultar-se a la fila inferior, visible també a la base. El catàleg d’equip i millores utilitza la mateixa graella del taller i es pot consultar durant l’expedició. Les compres i millores s’activen a la base.
+
 - Cada espècie de flora analitzada o fauna observada, primera fotografia per espècie i mostra recollida donen un punt de recerca al moment. El saldo es mostra a Recursos i només es pot gastar en millores al taller. Verificat a Godot el saldo abans de tornar a la base i el descompte en aplicar una millora al taller.
 
 - Els apartats de la fila inferior i dels panells de la dreta tenen marcs independents i espai entre blocs. Revisat amb captures del mapa i de la sala a Godot.
@@ -323,6 +390,12 @@ Una selecció de sales determinada per la llavor conté la falguera de llum, inc
 
 ## Inventari, taller i equip per a la pressió
 
+- L’escàner biològic mostra el progrés sobre la flora o fauna. En completar-se, habilita la fotografia de totes dues i la recollida de mostres de flora. El model estàndard triga 6 s i perd 8 punts d’estat. El model avançat triga 3 s i en perd 4. La millora costa 3 materials i la reparació al taller en costa 1. La caixa d’eines també el pot reparar al camp. Verificats a Godot el progrés, el desgast i les accions disponibles després de l’escaneig.
+
+- La caixa d’eines costa 2 materials al taller. Cada caixa recupera fins a 30 punts d’estat del vestit, les botes o l’eina de mineria durant la inspecció d’una sala. Verificat a Godot el cost, el menú de selecció i el consum només en reparar.
+
+- Les botes perden un punt percentual d’integritat cada 80 unitats recorregudes. El desgast redueix gradualment la velocitat fins a un 30% i el taller pot reparar les botes per 1 material. Verificat a Godot el desgast per distància i la reparació.
+
 - Mentre s’extreu una veta, les ordres de moviment, el retorn a la base i els ascensors queden bloquejats. Verificat a Godot que es recupera el moviment en completar l’extracció.
 
 - Les eines de mineria perden estat mentre extreuen vetes, amb desgast provisional del 8%, 6% i 4% per jaciment segons l’eina. El taller les pot reparar al 100% per 1 material. Verificat a Godot el desgast, l’avaria a mig treball i la reparació.
@@ -337,7 +410,7 @@ Una selecció de sales determinada per la llavor conté la falguera de llum, inc
 
 - Els minerals apareixen com una veta sobre una roca, que continua visible després de l’extracció. La durada provisional és de 6 s amb el pic, 4 s amb el trepant i 2 s amb l’extractor. El percentatge de recollida es dibuixa sobre la veta. Verificat a Godot el percentatge a mitja extracció i el lliurament del material.
 
-- En extreure un jaciment es mostra un avís sota el percentatge de la sala amb el guany i el total a l’inventari. Verificat a Godot que l’extracció amb el pic manual suma un material, actualitza la graella i no torna a sumar en repetir l’acció al mateix jaciment.
+- En extreure un jaciment, el guany apareix a la fitxa Materials de la fila inferior. Verificat a Godot que l’extracció amb el pic manual suma un material, actualitza la graella i no torna a sumar en repetir l’acció al mateix jaciment.
 
 - La vista isomètrica aplica llum ambiental baixa. La llanterna projecta un feix amb vores suaus orientat segons l’últim moviment de l’explorador. Verificat el renderitzat OpenGL del feix en dues direccions.
 
