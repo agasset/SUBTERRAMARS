@@ -264,3 +264,153 @@ Una ordre de moviment des del mapa ara conserva l'identificador de la sala clica
 ## Moviment sobre la línia central de les galeries
 
 La ruta de graella continua trobant un camí transitable, però ara en els trams que coincideixen amb una galeria se substitueixen les cel·les en ziga-zaga per punts projectats sobre la mateixa corba `corridor.points` que es dibuixa al mapa. Cada segment de la ruta ajustada es comprova contra la màscara transitable i les cel·les revelades; si no és segur o visible, aquell tram conserva la ruta original. La prova de navegació ara valida segments continus sobre la màscara i comprova que el jugador comparteix punts amb la línia central generada. Verificació: Godot 4.7.2 headless, 51/51 llavors aprovades, prova de seguiment de la galeria aprovada i `git diff --check` net. Limitació: encara cal comprovar visualment en una partida que la velocitat i l'animació del jugador es llegeixin bé.
+
+
+## Primera troballa de flora
+
+Una selecció de sales determinada per la llavor conté la falguera de llum, inclosa una sala veïna de l’entrada. A la vista isomètrica apareix quan l’explorador és a prop i ha revelat el terreny. Es pot seleccionar i analitzar amb el botó del panell d’exploració. El catàleg mostra la il·lustració, la descripció i les sales on s’ha analitzat; el mapa marca aquestes troballes. Les dades es mantenen durant la partida actual, també si es torna a la base. Pendent de revisió visual del flux complet.
+
+## Reorganització de la interfície
+
+- Cada espècie de flora analitzada o fauna observada, primera fotografia per espècie i mostra recollida donen un punt de recerca al moment. El saldo es mostra a Recursos i només es pot gastar en millores al taller. Verificat a Godot el saldo abans de tornar a la base i el descompte en aplicar una millora al taller.
+
+- Els apartats de la fila inferior i dels panells de la dreta tenen marcs independents i espai entre blocs. Revisat amb captures del mapa i de la sala a Godot.
+
+- Amb la llum del casc apagada o esgotada, el moviment queda restringit al terreny revelat i les sales il·luminades. Verificat a Godot el bloqueig d’una destinació fosca i l’aturada quan la bateria s’esgota en moviment.
+
+- La fila inferior inclou l’oxigen del dipòsit a Equip i mostra barres verticals d’oxigen, integritat del vestit, càrrega del casc i estat de l’eina de mineria. Verificat a Godot amb els quatre valors parcialment consumits.
+
+- Les fitxes de la fila inferior del mapa i la sala es reparteixen en Recursos, Equip i Recerca. Disposició comprovada amb una captura del mapa a Godot.
+
+- Els botons del panell dret s’agrupen per funció. A la sala hi ha Navegació, Astronauta i Recerca i recursos. Al mapa hi ha Navegació, Recerca i Mapa. Verificat a Godot el canvi de vista i l’ús de l’ascensor amb la disposició nova.
+
+- La interfície indica la profunditat com a nivell 0 a superfície i nivells -1, -2 sota terra. Els ascensors tenen una icona pròpia amb fletxa de pujada o baixada a la sala, al mapa i a la llegenda. Verificat a Godot el recorregut entre els tres nivells disponibles.
+
+- Al mapa, clicar el marcador de l’explorador quan és dins d’una sala o clicar el fragment visible d’una sala visitada obre la inspecció, encara que la sala estigui pendent d’escanejar. Verificat a Godot el clic sobre l’explorador en una sala fosca i el bloqueig d’una sala encara no visitada.
+
+- El botó Mapa centra la càmera en l’explorador i el segueix fins que acaba el desplaçament en curs. El zoom manual, el desplaçament de càmera i l’enquadrament del mapa cancel·len aquest seguiment.
+
+- El panell esquerre mostra barres d’oxigen, integritat del vestit i càrrega de la llanterna. El text de la llanterna canvia a taronja amb un 20% de càrrega o menys. Les piles de recanvi tenen una fitxa pròpia a la fila inferior de l’inventari.
+
+- Amb la llum del casc apagada o esgotada, caminar per una sala en penombra no descobreix terreny ni sortides noves. La bateria dura provisionalment 180 segons d’ús i la partida comença amb un recanvi. L’inventari indica la càrrega i els recanvis. Verificat a Godot l’esgotament i el canvi de bateria.
+
+- L’escàner manual requereix llum. A les sales en penombra, la mineria, l’anàlisi de flora, l’observació de fauna i la càmera exigeixen que la troballa estigui dins el feix i a la vista. Amb la sala il·luminada, les eines es poden fer servir des de dins de la sala sense límit de distància. Verificat a Godot el bloqueig a les fosques, l’orientació del feix, l’aturada de l’extracció en apagar la llanterna i l’extracció a distància en una sala il·luminada.
+
+- Els accessos ara es representen com a plataformes d’ascensor metàl·liques amb baranes. El clic utilitza el contorn de la plataforma. Verificat a Godot el descens directe des de la superfície i les transicions subterrànies mitjançant el botó de la sala.
+
+- Les nou fitxes de l’inventari es mostren en una sola fila inferior al mapa i a la sala. Els valors es comparteixen amb la graella i les accions d’equip es troben al panell de la sala. Verificat el renderitzat de la fila a Godot.
+
+- Els accessos indiquen la direcció i el destí amb fletxes i etiquetes. A la superfície, clicar l’ascensor baixa directament al nivell 1. Sota terra, un clic inicia l’aproximació si cal i activa la pujada o baixada corresponent en arribar. Verificat a Godot el descens i les dues pujades fins a la superfície.
+
+- Les balises de les sales d’entrada es dibuixen al centre de l’ascensor. En vista de sala, l’ona creix fins al punt més llunyà del contorn. Al mapa, el senyal de base i de les balises instal·lades fa servir el radi efectiu de cobertura.
+
+- La pujada de cada sala d’entrada es marca des de l’arribada amb una balisa ambre. En escanejar la sala de baixada, l’ascensor mostra quatre llums fixes i una etiqueta de destí, sense balisa automàtica. Verificat a Godot que es pot baixar i tornar a pujar.
+
+- Les balises instal·lades emeten llum blau violaci i dues ones animades que s’expandeixen i s’esvaeixen a la vista isomètrica i al mapa. Verificat el renderitzat de totes dues vistes a Godot.
+
+- La projecció de sala manté l’orientació del mapa general i comprimeix l’eix vertical per conservar la sensació de profunditat. Verificat a Godot que 58 boques de galeria mantenen la posició relativa horitzontal i vertical i que la projecció inversa recupera les coordenades del clic.
+
+- El Catàleg de l’expedició presenta una graella de dues columnes amb una fitxa per espècie registrada. Cada fitxa inclou fotografia o icona, estat, descripció i ubicacions. Verificat a Godot amb el catàleg buit i amb quatre registres de prova.
+
+- La pestanya Taller i compres mostra sis opcions en una graella amb efectes, preus i accions. Disposició comprovada amb una captura OpenGL de Godot a la base.
+
+- La pestanya Inventari mostra una graella de tres columnes amb quantitats, estat de l’equip i recerca pendent. Disposició comprovada amb una captura OpenGL de Godot a la base.
+
+- El panell esquerre agrupa oxigen, vestit, senyal, recursos i profunditat. Inventari i catàleg es poden obrir des de les vistes principals.
+- El mapa concentra el progrés i les accions en un panell curt. La llegenda agrupa el significat dels marcadors. A Opcions es poden ocultar els cercles de cobertura i les icones biològiques, i accedir als controls de desenvolupament i de llavor.
+- La vista isomètrica manté el percentatge de sala a dalt i mostra les accions disponibles segons les troballes i l’equip. El taller agrupa millores de recerca, fabricació i eines de mineria.
+- Verificat amb l’arrencada headless de Godot 4.7.2 i captures OpenGL del mapa, la sala isomètrica, la llegenda i el taller. Queda pendent comprovar la llegibilitat amb una partida avançada i diverses mides de finestra.
+
+## Inventari, taller i equip per a la pressió
+
+- Mentre s’extreu una veta, les ordres de moviment, el retorn a la base i els ascensors queden bloquejats. Verificat a Godot que es recupera el moviment en completar l’extracció.
+
+- Les eines de mineria perden estat mentre extreuen vetes, amb desgast provisional del 8%, 6% i 4% per jaciment segons l’eina. El taller les pot reparar al 100% per 1 material. Verificat a Godot el desgast, l’avaria a mig treball i la reparació.
+
+- Tornar a la superfície conserva l’oxigen, la integritat del vestit i la bateria. Al taller, la recàrrega completa d’oxigen costa 2 materials, la reparació del vestit en costa 1 i una bateria del casc en costa 1. Són preus provisionals. Verificat a Godot el retorn, el bloqueig sense materials i el resultat de les compres.
+
+- Les botes apareixen a l’inventari i es milloren al taller. Velocitats provisionals de 145, 175 i 210 unitats per segon, aplicades des del mateix moviment del mapa i de la sala. Verificades a Godot la compra de les dues millores i la velocitat de les botes impulsades.
+
+- Cada sala d’entrada subterrània té llum ambiental reforçada i quatre llums fixes al voltant de l’accés. Les altres sales guanyen la mateixa il·luminació amb quatre llums repartides pel terra quan queden al 100%. Verificat amb captures OpenGL als nivells 1 i 2 per a les entrades i amb una altra sala abans i després d’escanejar-la.
+
+- El panell dret del mapa i de la vista isomètrica mostra el percentatge de vetes descobertes respecte als jaciments del nivell, inclosos els ja explotats. Verificat el renderitzat amb Godot 4.7.2.
+
+- Els minerals apareixen com una veta sobre una roca, que continua visible després de l’extracció. La durada provisional és de 6 s amb el pic, 4 s amb el trepant i 2 s amb l’extractor. El percentatge de recollida es dibuixa sobre la veta. Verificat a Godot el percentatge a mitja extracció i el lliurament del material.
+
+- En extreure un jaciment es mostra un avís sota el percentatge de la sala amb el guany i el total a l’inventari. Verificat a Godot que l’extracció amb el pic manual suma un material, actualitza la graella i no torna a sumar en repetir l’acció al mateix jaciment.
+
+- La vista isomètrica aplica llum ambiental baixa. La llanterna projecta un feix amb vores suaus orientat segons l’últim moviment de l’explorador. Verificat el renderitzat OpenGL del feix en dues direccions.
+
+Es poden explotar jaciments als dos nivells. El pic manual obté un material per jaciment, el trepant n’obté dos i l’extractor n’obté tres. Les eines es compren al taller de la base i s’equipen automàticament. Amb els materials també es fabriquen balises, reserves portàtils de cinc minuts d’oxigen i un vestit reforçat. La llanterna augmenta en una cel·la el radi de descoberta mentre està encesa. El vestit es desgasta més de pressa al nivell 2, el reforç redueix el desgast un 60% i a la superfície es repara. El vestit esgotat dobla el consum d’oxigen. L’inventari és accessible durant l’expedició i el taller només a la base.
+
+La pujada del nivell 2 es pot activar clicant l’accés a la vista isomètrica o amb el botó de retorn. El retorn automàtic busca un punt accessible dins de la sala d’arribada. Les proves headless han comprovat compres, extracció sense duplicats, reserva d’oxigen, desgast per profunditat, conservació de l’equip i tornada al nivell 1 des d’una sala veïna. Queda pendent revisar la interfície en una partida.
+
+## Accés al segon nivell
+
+Una sala connectada amb l’entrada del nivell 1 conté la baixada. Un cop escanejada, l’accés es marca al mapa i, des de la vista isomètrica, es pot baixar quan l’explorador és a prop. El nivell 2 es genera amb una llavor derivada de la partida i té senyal a l’entrada. La pujada recupera la sala d’accés del nivell 1. Cada nivell conserva el seu estat mentre dura la partida. L’oxigen, les millores, l’inventari de balises i el registre científic es comparteixen entre nivells. El panell esquerre ressalta el nivell actual al diagrama de profunditat. La prova headless ha comprovat la baixada, la pujada, la restauració del mapa i la continuïtat de l’oxigen. Queda pendent la revisió visual.
+
+## Xarxa de balises
+
+Les ordres directes del mapa cap a sales visitades busquen una destinació accessible per les galeries recorregudes. En vista isomètrica es pot caminar cap a terra encara fosc dins de la sala actual. La boira es revela durant el moviment.
+
+El botó «Torna a la base» calcula una ruta per les galeries recorregudes i puja a la superfície quan l’explorador arriba a la sala d’entrada. Si manca una ruta coneguda, el joc ho indica. Godot ha carregat el canvi en mode headless.
+
+Es pot recuperar una balisa des de la sala on s’ha instal·lat fins que el seu senyal sigui necessari per arribar a una sala nova. Recuperar-la retorna una unitat a l’inventari i recalcula la cobertura. Godot ha carregat el canvi en mode headless.
+
+Una galeria nova només es pot travessar si hi ha cobertura contínua entre les dues boques. El marcador de l’entrada indica si es pot passar. Els cercles discontinus marquen l’abast real en línia recta. Les zones de la base i de les balises se sumen.
+
+La sala d’entrada rep el senyal directament de la base i l’explorador porta dues balises de camp. La cobertura es calcula per distància en línia recta des de la base o de qualsevol balisa. Per entrar en una sala nova, l’abast ha d’arribar fins a aquella sala. Les balises es poden col·locar en arribar físicament a una sala, encara que estigui pendent d’escanejar o no tingui cobertura al centre. Es pot tornar per les galeries recorregudes encara que es perdi el senyal. A la base, un punt de recerca augmenta l’abast de 650 a 900 unitats. Els valors són provisionals. Godot ha carregat el canvi en mode headless.
+
+## Reserva d’oxigen
+
+L’explorador disposa de 30 minuts d’oxigen. El temps sota terra redueix la reserva i el panell comú del mapa i de la vista isomètrica mostra el percentatge. Al 20% apareix l’avís de reserva baixa. Tornar a la base recarrega la reserva. En aquesta versió, esgotar-la activa l’avís de retorn. Queden pendents les conseqüències de l’esgotament i les millores del dipòsit. Godot ha carregat el canvi en mode headless.
+
+## Càmera de camp
+
+Després d’analitzar una planta o d’observar un animal, l’explorador pot fotografiar-lo de prop des de la vista isomètrica. Es desa una captura del joc per espècie i es mostra al catàleg durant la partida. Godot ha carregat la funcionalitat en mode headless. La captura de la imatge queda pendent de comprovació amb renderitzat interactiu.
+
+## Accés a les galeries des de la sala
+
+La navegació per una galeria té en compte l’amplada de la seva màscara de cel·les. Si el punt d’arribada previst no és accessible, l’ordre busca un altre punt revelat i transitable dins de la mateixa sala de destinació. La vista també canvia en arribar a la sala veïna quan la galeria és massa curta per arribar abans al llindar de canvi de càmera.
+
+## Segona espècie de fauna
+
+L’isòpode de pissarra comparteix el flux d’observació de l’escarabat. Té una closca segmentada blavosa, es projecta sobre el terra isomètric i es mou més lentament. La llavor assigna les espècies a les sales amb fauna. El catàleg agrupa les observacions per espècie. Godot ha carregat el canvi en mode headless. Queda pendent la revisió visual.
+
+## Moviment de l’escarabat
+
+L’escarabat fa un recorregut curt d’anada i tornada dins de la sala, amb una pausa a cada extrem. El recorregut es valida contra el contorn i la màscara transitable. La selecció i l’observació fan servir la posició actual. Godot ha carregat el canvi en mode headless. Queda pendent veure el moviment en una partida interactiva.
+
+## Primera troballa de fauna
+
+L’escarabat de cendra apareix en sales determinades per la llavor. Es pot veure de prop a la vista isomètrica, seleccionar i observar per registrar-lo al catàleg. El mapa marca les observacions i el percentatge de fauna ja compta al total del nivell. Aquesta primera versió representa un escarabat quiet. Godot ha carregat el canvi en mode headless i queda pendent la revisió visual.
+
+## Progrés de descoberta del nivell
+
+El panell del mapa mostra el percentatge de sales escanejades, galeries travessades de punta a punta i plantes analitzades. El percentatge total dona el mateix pes a les categories disponibles. La fauna es mostra com a pendent i s’incorporarà al càlcul quan estigui implementada. Godot ha carregat el canvi en mode headless.
+
+## Varietat de flora per llavor
+
+Cada planta pot ser una falguera de llum o un corall de basalt. La llavor determina quines sales tenen flora, la posició i l’espècie. El catàleg agrupa les troballes analitzades per espècie amb descripció i sales. Godot ha carregat el canvi en mode headless. Queda pendent una revisió visual en una partida.
+
+## Rutes cap a sales des del mapa
+
+Una ordre directa cap a una altra sala només pot utilitzar les zones descobertes de les sales visitades i els trams de galeria ja recorreguts. Una galeria nova es pot explorar donant una ordre a la seva boca.
+
+## Punts de recerca i millora d’abast
+
+Cada mostra lliurada val un punt de recerca. A la base es pot gastar un punt una sola vegada per passar de tres a quatre cel·les de radi de descoberta quan l’explorador es mou per una sala sense escanejar. El saldo es calcula a partir de les mostres lliurades i la compra, i el catàleg el mostra. La millora es conserva durant la partida actual. Godot ha carregat la interfície en mode headless. Queda pendent comprovar la compra i la descoberta ampliada en una partida interactiva.
+
+## Recollida i lliurament de mostres
+
+Després d’analitzar una planta, es pot recollir una mostra per sala. El retorn a la base lliura automàticament les mostres transportades i el catàleg mostra els dos recomptes. La prova headless del flux ha comprovat la recollida, que no es duplica, el lliurament i el recompte del catàleg. Queda pendent la revisió visual en una partida.
+
+## Recorregut dins de les sales
+
+Al mapa, la galeria es pinta a mesura que l’explorador hi passa. El registre cobreix també les cel·les transitables de la vora per evitar talls al dibuix. Les ordres des d’una sortida isomètrica suavitzen els esglaons curts del recorregut alternatiu quan el segment directe és transitable i revelat. Godot ha carregat el canvi en mode headless. Queda pendent revisar la continuïtat del traçat en una partida.
+
+El clic al mapa i el botó d’inspecció obren la vista isomètrica només per a sales registrades com a explorades. L’arribada a peu permet explorar una sala nova. Quan s’arriba al llindar del 90% de descoberta, el joc revela la resta i la registra com a escanejada automàticament.
+
+Durant un trajecte, si l’explorador entra en una sala intermèdia que encara no està registrada com a explorada, s’atura i obre la vista isomètrica. Per reprendre el trajecte cal una nova ordre de moviment. Les sales intermèdies completades es poden travessar.
+
+El mapa general i la vista isomètrica comparteixen el mateix ajust de navegació. Dins de la sala s’ometen els esglaons de la graella quan el segment directe passa per terra transitable i revelat. A les galeries es continua seguint la corba central. La bateria de Godot 4.7.2 en mode headless ha superat 51 de 51 llavors. Queda pendent la comprovació visual amb una partida interactiva.

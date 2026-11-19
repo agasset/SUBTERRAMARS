@@ -4,6 +4,9 @@ const Generator = preload("res://scripts/world_generator.gd")
 var navigation_probe: Node2D
 
 func _initialize() -> void:
+	call_deferred("_run_validation")
+
+func _run_validation() -> void:
 	var main_scene := load("res://scenes/main.tscn") as PackedScene
 	navigation_probe = main_scene.instantiate() as Node2D
 	root.add_child(navigation_probe)
@@ -59,7 +62,7 @@ func _initialize() -> void:
 		failures.append("player movement should follow the generated gallery centerline instead of a grid zigzag")
 	var cave_detection_ok := _caves_detected_by_proximity(Generator.generate(134027))
 	if not cave_detection_ok:
-		failures.append("approaching an unexplored cave should show a selectable sensor signature without revealing its contour")
+		failures.append("an unexplored cave should show a sensor signature without opening inspection on click")
 	var surface_entry_ok := _surface_entry_valid(Generator.generate(134027))
 	if not surface_entry_ok:
 		failures.append("new worlds should start at the level 0 base and descend through its hatch to the level 1 entry cave")
@@ -179,9 +182,26 @@ func _map_order_skips_intermediate_rooms(world: Dictionary) -> bool:
 	if chosen_target < 0:
 		return false
 	var target: Dictionary = world.caves[chosen_target]
+	navigation_probe.set("visited_caves", {source_id: true, chosen_target: true})
+	navigation_probe.set("walked_gallery_spans", {})
+	navigation_probe.set("completed_gallery_traces", {})
 	var order: Dictionary = navigation_probe.call("_resolve_order_target", target.position)
 	if order.is_empty() or int(order.get("inspection_cave_id", -1)) != chosen_target:
 		return false
+	if not navigation_probe.call("_path_for_order", order).is_empty():
+		return false
+	var known_spans := {}
+	var known_galleries := {}
+	var visited := {}
+	for cave in world.caves:
+		visited[cave.id] = true
+	for corridor in world.corridors:
+		known_spans[corridor.id] = [corridor.points]
+		known_galleries[corridor.id] = true
+	navigation_probe.set("visited_caves", visited)
+	navigation_probe.set("walked_gallery_spans", known_spans)
+	navigation_probe.set("completed_gallery_traces", known_galleries)
+	order = navigation_probe.call("_resolve_order_target", target.position)
 	chosen_path = navigation_probe.call("_path_for_order", order)
 	if chosen_path.is_empty():
 		return false
@@ -283,7 +303,7 @@ func _analysis_blocks_exit_without_perspective_change(world: Dictionary) -> bool
 	navigation_probe.call("_exit_inspection")
 	var returned_to_map: bool = not bool(navigation_probe.get("analysis_mode")) and int(navigation_probe.get("selected_cave")) == -1
 	var corridor_visible_on_map: bool = navigation_probe.call("_should_draw_corridor", selected_corridor)
-	var overview_zoom_keeps_tunnel_readable: bool = is_equal_approx(float(navigation_probe.get("zoom_level")), 1.1)
+	var overview_zoom_keeps_tunnel_readable: bool = is_equal_approx(float(navigation_probe.get("zoom_level")), 0.90)
 	navigation_probe.set("unit_position", safe_room_target)
 	navigation_probe.set("move_path", attempted_exit.duplicate())
 	navigation_probe.set("selected_route", attempted_exit.duplicate())
@@ -297,6 +317,7 @@ func _analysis_blocks_exit_without_perspective_change(world: Dictionary) -> bool
 
 func _caves_detected_by_proximity(world: Dictionary) -> bool:
 	navigation_probe.set("world", world)
+	navigation_probe.set("visited_caves", {})
 	navigation_probe.set("dev_mode", false)
 	navigation_probe.set("analysis_mode", false)
 	navigation_probe.set("selected_cave", -1)
@@ -312,14 +333,14 @@ func _caves_detected_by_proximity(world: Dictionary) -> bool:
 		return false
 	var marker_screen: Vector2 = navigation_probe.call("_world_to_screen", cave.position)
 	navigation_probe.call("_select_cave", marker_screen)
-	var marker_selects_preview: bool = bool(navigation_probe.get("analysis_mode")) and int(navigation_probe.get("selected_cave")) == target_id and not navigation_probe.get("explored_caves").has(target_id)
+	var marker_blocks_inspection: bool = not navigation_probe.get("analysis_mode") and not navigation_probe.get("explored_caves").has(target_id)
 	navigation_probe.set("analysis_mode", false)
 	navigation_probe.set("selected_cave", -1)
 	navigation_probe.set("detected_caves", {})
 	navigation_probe.set("unit_position", cave.position + Vector2(float(cave.radius) + 800.0, 0.0))
 	navigation_probe.call("_detect_caves_near_unit")
 	var not_detected_from_far_away: bool = not navigation_probe.get("detected_caves").has(target_id)
-	return detected_before_scan and marker_selects_preview and not_detected_from_far_away
+	return detected_before_scan and marker_blocks_inspection and not_detected_from_far_away
 
 func _surface_entry_valid(world: Dictionary) -> bool:
 	navigation_probe.call("_new_world", int(world.seed))
@@ -331,7 +352,7 @@ func _surface_entry_valid(world: Dictionary) -> bool:
 	hatch_click.pressed = true
 	hatch_click.position = navigation_probe.call("_surface_hatch_center")
 	navigation_probe.call("_input", hatch_click)
-	var entered_level_one: bool = not navigation_probe.get("surface_mode") and int(navigation_probe.get("current_level")) == 1 and navigation_probe.get("unit_position").distance_to(entry_position) < 0.01 and navigation_probe.get("explored_caves").has(world.entry) and navigation_probe.call("_exit_count", world.entry) > 0 and navigation_probe.get("base_return_button").visible and not navigation_probe.get("base_return_button").disabled
+	var entered_level_one: bool = not navigation_probe.get("surface_mode") and int(navigation_probe.get("current_level")) == 1 and navigation_probe.get("unit_position").distance_to(entry_position) < 0.01 and navigation_probe.get("explored_caves").has(world.entry) and navigation_probe.call("_exit_count", world.entry) > 0 and navigation_probe.get("lower_level_button").visible
 	if not entered_level_one:
 		return false
 	var discovered_exit_count: int = navigation_probe.call("_exit_count", world.entry)
@@ -509,8 +530,11 @@ func _visibility_blocked_by_obstacles(world: Dictionary) -> bool:
 func _scanner_stays_in_current_cave(world: Dictionary) -> bool:
 	navigation_probe.set("world", world)
 	navigation_probe.set("dev_mode", false)
-	navigation_probe.set("dev_mode", false)
+	navigation_probe.set("analysis_mode", false)
 	var cave_id: int = world.entry
+	navigation_probe.set("visited_caves", {cave_id: true})
+	navigation_probe.set("walked_gallery_spans", {})
+	navigation_probe.set("completed_gallery_traces", {})
 	var cave: Dictionary = world.caves[cave_id]
 	navigation_probe.set("current_cave_id", cave_id)
 	navigation_probe.set("unit_position", cave.position)
@@ -666,7 +690,7 @@ func _player_map_scopes_to_explored(world: Dictionary) -> bool:
 	navigation_probe.set("dev_mode", false)
 	if not is_instance_valid(navigation_probe.get("ui_root")):
 		navigation_probe.call("_build_ui")
-	if navigation_probe.call("_over_ui", Vector2(1300, 500)):
+	if navigation_probe.call("_over_ui", Vector2(1300, 720)):
 		return false
 	if not navigation_probe.call("_over_ui", Vector2(1300, 100)):
 		return false
@@ -725,6 +749,8 @@ func _player_map_scopes_to_explored(world: Dictionary) -> bool:
 	return true
 
 func _scanner_requires_selection_without_camera_change(world: Dictionary) -> bool:
+	navigation_probe.set("surface_mode", false)
+	navigation_probe.set("analysis_mode", false)
 	navigation_probe.set("world", world)
 	var cave: Dictionary = world.caves[world.entry]
 	navigation_probe.set("current_cave_id", world.entry)
@@ -804,7 +830,9 @@ func _revelation_and_camera_valid(world: Dictionary) -> bool:
 	navigation_probe.set("discovered_exits", {})
 	if float(navigation_probe.call("_room_reveal_ratio", test_cave)) < 0.90:
 		return false
+	navigation_probe.set("flashlight_on", true)
 	navigation_probe.call("_reveal_around", test_cave.position, 0)
+	navigation_probe.set("flashlight_on", false)
 	if float(navigation_probe.call("_room_reveal_ratio", test_cave)) < 0.999 or not navigation_probe.get("explored_caves").has(test_cave_id):
 		return false
 	for corridor in world.corridors:
