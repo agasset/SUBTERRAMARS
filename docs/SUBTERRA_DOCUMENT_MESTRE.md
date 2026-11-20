@@ -460,6 +460,8 @@ Cada zona especial té un perfil propi de generació: regles de topologia, compo
 
 El nivell 19 prepara el tram final i connecta amb el 20. El nivell 20 és el fons i completar-hi la investigació final tanca la partida. Arribar-hi no completa automàticament l’objectiu. No existeix un nivell 21 en la partida completa. El rang de 20–40 coves per nivell es manté també a les zones especials, mentre no s’aprovi una excepció.
 
+Els nivells −19 i −20 tenen exactament 40 sales cadascun. La sala 40 és la més llunyana de l’entrada en línia recta. Al −19 conté la baixada al −20. Al −20 conté la investigació del Nucli, que obre la pantalla final quan el jugador la completa.
+
 ### Investigacions procedurals resolubles
 
 Generar els objectius a partir de contingut existent i accessible, o reservar explícitament el contingut necessari abans de validar. Variar objectius i organismes entre partides, però conservar-los dins del mateix món, incloent-hi retorns a la base i càrregues. No dependre d’una espècie excepcional de probabilitat ínfima, de l’aparició casual d’un individu ni d’un equip impossible d’obtenir. La recerca obligatòria i les rutes de retorn han de superar les mateixes garanties de progressió de la resta del joc.

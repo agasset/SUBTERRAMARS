@@ -2,6 +2,7 @@ extends RefCounted
 class_name WorldGenerator
 
 const CAVE_COUNT := 20
+const FINAL_LEVEL_CAVE_COUNT := 40
 const WORLD_RECT := Rect2(0, 0, 2200, 1500)
 const MIN_DISTANCE := 205.0
 const CELL_SIZE := 10.0
@@ -9,35 +10,69 @@ const GRID_SIZE := Vector2i(220, 150)
 const GENERATOR_VERSION := "p0b-4"
 const LAYOUT_SEED_VERSION := "p0b-2"
 
+# Room aspect, radial irregularity, corridor bend, corridor width.
+const BIOME_GEOMETRY := {
+	4: [Vector2(1.15, 0.92), 0.55, 0.62, 1.03],
+	7: [Vector2(1.37, 0.73), 0.40, 0.56, 0.82],
+	10: [Vector2(1.13, 1.09), 0.76, 1.11, 1.13],
+	13: [Vector2(0.82, 1.25), 1.30, 0.79, 0.91],
+	16: [Vector2(1.06, 1.05), 1.35, 1.22, 1.05],
+	19: [Vector2(1.23, 0.91), 0.58, 0.85, 0.95],
+	20: [Vector2(1.11, 1.11), 0.30, 0.69, 1.16],
+}
+
+static func biome_at_depth(depth: int) -> int:
+	return depth if depth >= 19 else 1 + floori(float(maxi(depth, 1) - 1) / 3.0) * 3
+
 static func _seed_for(seed_value: int, domain: String, index: int) -> int:
 	var text := "%d|%s|%d|%s" % [seed_value, LAYOUT_SEED_VERSION, index, domain]
 	var hash_value: int = hash(text)
 	return hash_value & 0x7fffffff
 
-static func generate(seed_value: int) -> Dictionary:
+static func generate(seed_value: int, final_level: bool = false, biome: int = 1) -> Dictionary:
+	var style: Array = BIOME_GEOMETRY.get(biome, [])
 	var caves: Array[Dictionary] = []
 	var rng := RandomNumberGenerator.new()
 	rng.seed = _seed_for(seed_value, "topology", 0)
 	var points: Array[Vector2] = []
 	var attempts := 0
-	while points.size() < CAVE_COUNT and attempts < 12000:
+	var cave_count := FINAL_LEVEL_CAVE_COUNT if final_level else CAVE_COUNT
+	var spacing := 175.0 if final_level else MIN_DISTANCE
+	while points.size() < cave_count and attempts < 12000:
 		attempts += 1
 		var point := Vector2(rng.randf_range(100, 2100), rng.randf_range(100, 1400))
 		var valid := true
 		for other in points:
-			if point.distance_to(other) < MIN_DISTANCE:
+			if point.distance_to(other) < spacing:
 				valid = false
 				break
 		if valid:
 			points.append(point)
-	if points.size() < CAVE_COUNT:
+	if points.size() < cave_count and not final_level:
 		return _fallback(seed_value)
+	var used_grid := points.size() < cave_count
+	if used_grid:
+		points.clear()
+		for index in range(cave_count):
+			points.append(Vector2(130 + (index % 8) * 275, 150 + floori(float(index) / 8.0) * 300)
+				+ Vector2(rng.randf_range(-25, 25), rng.randf_range(-25, 25)))
 
 	# Start at the western edge, then form a deterministic minimum-distance tree.
 	var root := 0
 	for i in range(points.size()):
 		if points[i].x < points[root].x:
 			root = i
+	if final_level:
+		var farthest := root
+		for i in range(points.size()):
+			if points[root].distance_squared_to(points[i]) > points[root].distance_squared_to(points[farthest]):
+				farthest = i
+		var last := points.size() - 1
+		var swapped := points[last]
+		points[last] = points[farthest]
+		points[farthest] = swapped
+		if root == last:
+			root = farthest
 	var connected := {root: true}
 	var edges: Array[Vector2i] = []
 	while connected.size() < points.size():
@@ -56,6 +91,11 @@ static func generate(seed_value: int) -> Dictionary:
 		edges.append(Vector2i(best_from, best_to))
 		connected[best_to] = true
 	# Add a few short optional loops.
+	var loop_span := 520.0
+	if biome in [4, 7, 19]:
+		loop_span = 340.0
+	elif biome in [10, 16, 20]:
+		loop_span = 620.0
 	for i in range(points.size()):
 		var nearest := -1
 		var nearest_d := INF
@@ -66,7 +106,7 @@ static func generate(seed_value: int) -> Dictionary:
 			if d < nearest_d:
 				nearest_d = d
 				nearest = j
-		if nearest >= 0 and nearest_d < 520.0 * 520.0 and i < nearest:
+		if nearest >= 0 and nearest_d < loop_span * loop_span and i < nearest:
 			edges.append(Vector2i(i, nearest))
 
 	for i in range(points.size()):
@@ -76,19 +116,27 @@ static func generate(seed_value: int) -> Dictionary:
 		var radius: float = [52.0, 75.0, 105.0][size_class] * geometry_rng.randf_range(0.82, 1.18)
 		var contour := PackedVector2Array()
 		var count := 12
+		if biome == 4 or biome == 19:
+			count = 8
+		elif biome == 10 or biome == 20:
+			count = 16
 		for p in range(count):
 			var angle := TAU * float(p) / count
 			var r: float = radius * geometry_rng.randf_range(0.78, 1.22)
-			contour.append(Vector2(cos(angle) * r * geometry_rng.randf_range(0.85, 1.2), sin(angle) * r * geometry_rng.randf_range(0.72, 1.12)))
+			var point := Vector2(cos(angle) * r * geometry_rng.randf_range(0.85, 1.2), sin(angle) * r * geometry_rng.randf_range(0.72, 1.12))
+			if not style.is_empty():
+				var circular := Vector2.from_angle(angle) * radius
+				point = circular.lerp(point, float(style[1])) * (style[0] as Vector2)
+			contour.append(point)
 		caves.append({"id": i, "position": points[i], "radius": radius, "contour": contour, "size_class": size_class})
 
 	var corridors: Array[Dictionary] = []
 	for edge_index in range(edges.size()):
 		var edge: Vector2i = edges[edge_index]
-		corridors.append(_make_corridor(seed_value, edge_index, edge.x, edge.y, caves))
+		corridors.append(_make_corridor(seed_value, edge_index, edge.x, edge.y, caves, style))
 	var obstacles := _build_obstacles(seed_value, caves, corridors)
 	var masks := _build_masks(caves, corridors, obstacles)
-	return {"seed": seed_value, "version": GENERATOR_VERSION, "caves": caves, "corridors": corridors, "obstacles": obstacles, "entry": root, "attempts": attempts, "fallback": false, "cell_size": CELL_SIZE, "grid_size": GRID_SIZE, "terrain_mask": masks.terrain, "walkable_mask": masks.walkable}
+	return {"seed": seed_value, "version": GENERATOR_VERSION, "caves": caves, "corridors": corridors, "obstacles": obstacles, "entry": root, "objective": cave_count - 1 if final_level else -1, "attempts": attempts, "fallback": used_grid, "cell_size": CELL_SIZE, "grid_size": GRID_SIZE, "terrain_mask": masks.terrain, "walkable_mask": masks.walkable}
 
 static func _has_edge(edges: Array[Vector2i], a: int, b: int) -> bool:
 	for edge in edges:
@@ -113,7 +161,7 @@ static func _fallback(seed_value: int) -> Dictionary:
 	var masks := _build_masks(caves, edges, obstacles)
 	return {"seed": seed_value, "version": GENERATOR_VERSION, "caves": caves, "corridors": edges, "obstacles": obstacles, "entry": 0, "attempts": 12000, "fallback": true, "cell_size": CELL_SIZE, "grid_size": GRID_SIZE, "terrain_mask": masks.terrain, "walkable_mask": masks.walkable}
 
-static func _make_corridor(seed_value: int, corridor_id: int, cave_a_id: int, cave_b_id: int, caves: Array[Dictionary]) -> Dictionary:
+static func _make_corridor(seed_value: int, corridor_id: int, cave_a_id: int, cave_b_id: int, caves: Array[Dictionary], style: Array = []) -> Dictionary:
 	var cave_a: Dictionary = caves[cave_a_id]
 	var cave_b: Dictionary = caves[cave_b_id]
 	var start: Vector2 = cave_a.position
@@ -125,6 +173,9 @@ static func _make_corridor(seed_value: int, corridor_id: int, cave_a_id: int, ca
 	var bend: float = clampf(travel.length() * rng.randf_range(0.14, 0.26), 48.0, 225.0) * (-1.0 if rng.randf() < 0.5 else 1.0)
 	var secondary_limit: float = minf(125.0, travel.length() * 0.16)
 	var secondary_bend: float = rng.randf_range(-secondary_limit, secondary_limit)
+	if not style.is_empty():
+		bend *= float(style[2])
+		secondary_bend *= float(style[2])
 	var margin := 52.0
 	var control_a := start + travel * 0.28 + perpendicular * bend
 	var control_b := start + travel * 0.72 + perpendicular * (bend * 0.20 + secondary_bend)
@@ -143,6 +194,8 @@ static func _make_corridor(seed_value: int, corridor_id: int, cave_a_id: int, ca
 	var exit_b := _route_exit(cave_b, points, true)
 	var size_bias := (float(cave_a.size_class) + float(cave_b.size_class)) * 0.5
 	var width: float = rng.randf_range(24.0 + size_bias * 3.0, 36.0 + size_bias * 6.0)
+	if not style.is_empty():
+		width *= float(style[3])
 	return {"id": corridor_id, "a": cave_a_id, "b": cave_b_id, "points": points, "exit_a": exit_a.position, "exit_b": exit_b.position, "direction_a": exit_a.direction, "direction_b": exit_b.direction, "width": width}
 
 static func _build_obstacles(seed_value: int, caves: Array[Dictionary], corridors: Array[Dictionary]) -> Array[Dictionary]:

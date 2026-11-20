@@ -2,7 +2,8 @@ extends Node2D
 
 const Generator = preload("res://scripts/world_generator.gd")
 const LocalSaveStore = preload("res://scripts/local_save_store.gd")
-const AUTOSAVE_SECONDS := 60.0
+const OrganismTraits = preload("res://scripts/organism_traits.gd")
+const AUTOSAVE_SECONDS := 3.0
 const SAVED_GAME_FIELDS := [
 	"seed_value", "current_level", "surface_mode", "analysis_mode", "current_cave_id",
 	"selected_cave", "selected_cave_focus", "unit_position", "explorer_facing", "zoom_level", "camera_offset",
@@ -10,7 +11,7 @@ const SAVED_GAME_FIELDS := [
 	"mining_tool", "mining_tool_integrity", "equipped_boots", "boots_integrity", "bio_scanner_tier", "bio_scanner_integrity",
 	"flashlight_on", "flashlight_charge", "flashlight_spares", "crafted_beacons", "materials_in_pack",
 	"quartz_in_pack", "magnetite_in_pack", "ladder_uses_spent", "repair_kit_uses_spent",
-	"supply_tiers", "owned_modifiers", "equipped_modifiers", "equipment_research_spent", "dropped_materials",
+	"supply_tiers", "owned_modifiers", "equipped_modifiers", "equipment_research_spent",
 	"rockfall_cooldown", "last_revealed_cell", "isometric_passage_id", "inspection_corridor_id",
 	"inspection_destination_cave_id", "inspect_on_cave_arrival", "moving", "move_path", "move_target",
 	"chained_cave_id", "chained_arrival", "level_navigation_target", "use_elevator_on_arrival",
@@ -27,6 +28,15 @@ var profile_name_input: LineEdit
 var profiles_status: Label
 var save_profile_button: Button
 var load_profile_button: Button
+var delete_profile_button: Button
+var delete_profile_dialog: ConfirmationDialog
+var pending_profile_deletion := ""
+var history_dialog: AcceptDialog
+var history_text: RichTextLabel
+var expedition_history: Array[Dictionary] = []
+var expedition_record: Dictionary = {}
+var biological_register: Dictionary = {}
+var biological_photos: Dictionary = {}
 const BG := Color("07111c")
 const PANEL := Color("0c1b29")
 const CYAN := Color("5de5ed")
@@ -54,7 +64,6 @@ var analysis_mode := false
 var surface_mode := true
 var current_level := 0
 var inactive_levels: Dictionary = {}
-const OXIDIZED_CAVES_DEPTH := 3
 const OXIDIZED_CAVES_NAME := "Coves oxidades"
 var descent_access := -1
 var lower_level_button: Button
@@ -66,6 +75,17 @@ var repair_kit_urgent := false
 const FOLDING_LADDER_REPAIR_COST := 2
 var use_elevator_on_arrival := false
 const CAMPAIGN_DEPTH := 20
+const DEPTH_REWARDS := {
+	4: "+1 balisa inicial",
+	7: "+1 bateria del casc de recanvi",
+	10: "+1 ús inicial de la caixa d’eines",
+	13: "+1 reserva d’oxigen inicial",
+	16: "+1 farmaciola inicial",
+	19: "+1 ús inicial de l’escala plegable",
+}
+var deepest_reached := 0
+var starting_rewards_depth := 0
+var rewards_dialog: AcceptDialog
 const DEPTH_ZONE_NAMES := {
 	1: OXIDIZED_CAVES_NAME,
 	4: "Cavernes cristal·lines",
@@ -75,6 +95,16 @@ const DEPTH_ZONE_NAMES := {
 	16: "Abisme biològic",
 	19: "El Llindar",
 	20: "El Nucli",
+}
+const BIOME_ROCK := {
+	1: ["352528", "68473a", "805043"],
+	4: ["252037", "675081", "ad8cd0"],
+	7: ["203448", "537c96", "8bc1db"],
+	10: ["27342a", "507750", "8cad66"],
+	13: ["392422", "834937", "c77144"],
+	16: ["241c32", "573763", "95659c"],
+	19: ["222a30", "625742", "a89662"],
+	20: ["1c3036", "40686e", "74b9b8"],
 }
 const DEPTH_CATEGORIES := ["Sales explorades", "Galeries recorregudes", "Flora analitzada", "Fauna observada", "Vetes descobertes"]
 var depth_diagram: ScrollContainer
@@ -274,8 +304,9 @@ var mining_tool_button: Button
 var material_sites: Dictionary = {}
 var collected_materials: Dictionary = {}
 var materials_in_pack := 0
-var dropped_materials: Array[Dictionary] = []
 var death_dialog: AcceptDialog
+var victory_dialog: AcceptDialog
+var expedition_completed := false
 var crafted_beacons := 0
 var oxygen_cartridges := 0
 var flashlight_on := false
@@ -314,7 +345,14 @@ const FLASHLIGHT_USABLE_DOT := 0.68
 const FLORA_SPECIES := {
 	"falguera": {"name": "Falguera de llum", "description": "Els brots emeten una llum verda i creixen arran de terra."},
 	"coral": {"name": "Corall de basalt", "description": "Les branques violetes creixen en ventall entre les esquerdes de la roca."},
-	"molsa_ferrica": {"name": "Molsa fèrrica", "description": "Forma coixinets de color coure sobre la roca oxidada."}
+	"molsa_ferrica": {"name": "Molsa fèrrica", "description": "Forma coixinets de color coure sobre la roca oxidada."},
+	"coral_prismatic": {"biome": 4, "form": "coral", "color": "73e4ed", "name": "Corall prismàtic", "description": "Les branques turquesa creixen entre cristalls."},
+	"molsa_glacial": {"biome": 7, "form": "molsa", "color": "addfff", "name": "Molsa de gebre", "description": "Els coixinets blaus creixen sobre la roca freda."},
+	"falguera_jardi": {"biome": 10, "color": "c3ee78", "name": "Falguera de jardí", "description": "Els brots verd llima s’obren en arc."},
+	"coral_termic": {"biome": 13, "form": "coral", "color": "fa8254", "name": "Corall tèrmic", "description": "Els brots ataronjats ressegueixen les fissures càlides."},
+	"molsa_abissal": {"biome": 16, "form": "molsa", "color": "e197f4", "name": "Molsa abissal", "description": "Forma coixinets rosats a la roca profunda."},
+	"coral_llindar": {"biome": 19, "form": "coral", "color": "ffdb80", "name": "Corall del Llindar", "description": "Les puntes daurades es despleguen en ventall."},
+	"falguera_nucli": {"biome": 20, "color": "f1f4ff", "name": "Falguera del Nucli", "description": "Els brots pàl·lids destaquen sobre la roca del fons."},
 }
 var flora_sites: Dictionary = {}
 var flora_species_by_room: Dictionary = {}
@@ -322,9 +360,20 @@ var analyzed_flora: Dictionary = {}
 const FAUNA_SPECIES := {
 	"escarabat": {"name": "Escarabat de cendra", "description": "Un petit escarabat amb una closca ambre."},
 	"isopode": {"name": "Isòpode de pissarra", "description": "Una criatura de closca blavosa i segmentada que camina a poc a poc."},
-	"escarabat_ferric": {"name": "Escarabat fèrric", "description": "La closca rogenca es confon amb la pols de ferro de les galeries."}
+	"escarabat_ferric": {"name": "Escarabat fèrric", "description": "La closca rogenca es confon amb la pols de ferro de les galeries."},
+	"isopode_cristalli": {"biome": 4, "segmented": true, "color": "bcb0ff", "name": "Isòpode cristal·lí", "description": "La closca violeta està dividida en plaques brillants."},
+	"isopode_glacial": {"biome": 7, "segmented": true, "color": "93e2f6", "name": "Isòpode glacial", "description": "Camina lentament amb una closca blau cel."},
+	"escarabat_jardi": {"biome": 10, "color": "9ee57a", "name": "Escarabat de jardí", "description": "Té una closca verda i potes fines."},
+	"escarabat_termic": {"biome": 13, "color": "ff7651", "name": "Escarabat tèrmic", "description": "La closca de color brasa destaca sobre el terra."},
+	"isopode_abissal": {"biome": 16, "segmented": true, "color": "cb86ed", "name": "Isòpode abissal", "description": "Les plaques rosades li protegeixen el llom."},
+	"escarabat_llindar": {"biome": 19, "color": "f5d37c", "name": "Escarabat del Llindar", "description": "Té una closca daurada i ovalada."},
+	"isopode_nucli": {"biome": 20, "segmented": true, "color": "e3edf2", "name": "Isòpode del Nucli", "description": "Les plaques clares li donen un aspecte nacrat."},
 }
 var fauna_sites: Dictionary = {}
+const FAUNA_VARIANT_COLORS := ["f2ae61", "ef716b", "98dc79", "75d8ee", "c398f1", "e7e4ca"]
+const FAUNA_VARIANT_COLOR_NAMES := ["ambre", "corall", "verd", "blau", "violeta", "ivori"]
+const FAUNA_VARIANT_SIZES := ["molt petit", "petit", "mitjà", "gran", "molt gran"]
+const FAUNA_VARIANT_PATTERNS := ["llis", "una franja", "dues franges", "taques"]
 var fauna_species_by_room: Dictionary = {}
 var fauna_patrol_ends: Dictionary = {}
 var fauna_time := 0.0
@@ -342,6 +391,12 @@ var flora_catalog: AcceptDialog
 var flora_catalog_text: Label
 var catalog_grid: GridContainer
 var field_photos: Dictionary = {}
+var discovery_dialog: AcceptDialog
+var discovery_portrait: Control
+var discovery_photo: TextureRect
+var discovery_species := ""
+var discovery_is_fauna := false
+var saved_photo_bytes: Dictionary = {}
 var taking_field_photo := false
 var field_camera_button: Button
 var base_catalog_button: Button
@@ -360,21 +415,23 @@ func _ready() -> void:
 	equipment_bar.resized.connect(_layout_panels)
 	level_progress_strip.resized.connect(_layout_panels, CONNECT_DEFERRED)
 	_layout_panels()
+	_resume_autosave()
 
 func _process(delta: float) -> void:
-	if death_dialog.visible or profiles_dialog.visible or depth_trip_dialog.visible or restart_run_dialog.visible:
+	if discovery_dialog.visible or delete_profile_dialog.visible:
 		return
-	if not active_profile_id.is_empty():
-		autosave_elapsed += delta
-		if autosave_elapsed >= AUTOSAVE_SECONDS:
-			_save_active_profile()
+	if death_dialog.visible or victory_dialog.visible or profiles_dialog.visible or depth_trip_dialog.visible or restart_run_dialog.visible or rewards_dialog.visible or history_dialog.visible:
+		return
+	autosave_elapsed += delta
+	if autosave_elapsed >= AUTOSAVE_SECONDS:
+		_save_active_profile()
 	_update_rockfall(delta)
 	if analysis_mode and moving and inspection_corridor_id >= 0 and rockfall_corridor_id < 0 and rockfall_cooldown <= 0.0 and randf() < delta / 180.0 and _cave_at_position(unit_position) < 0:
 		_warn_of_rockfall(inspection_corridor_id, true)
 	if not surface_mode and not world.is_empty():
 		_update_automatic_helmet_light(unit_position)
 		_update_flashlight_charge(delta)
-		var pressure_wear: float = [0.0, 0.03, 0.10, 0.15][current_level]
+		var pressure_wear: float = [0.0, 0.03, 0.10, 0.15][mini(current_level, 3)]
 		var environment := _room_environment(_cave_at_position(unit_position))
 		var temperature_wear := 0.06 if environment == "calent" or environment == "gel" else 0.0
 		if _modifier_protects("vestit", environment):
@@ -541,7 +598,6 @@ func _draw() -> void:
 	var view := _view_rect()
 	if analysis_mode:
 		_draw_isometric_room()
-		_draw_dropped_materials()
 		_draw_rockfall()
 		return
 	# Subtle star-field marks anchored to world coordinates, visible in the map only.
@@ -608,8 +664,14 @@ func _draw() -> void:
 			_draw_beacon_waves(_world_to_screen(cave.position), _beacon_range() * zoom_level, 1.0, LEVEL_EXIT_BEACON_COLOR)
 		if _has_level_elevator(cave.id):
 			var access_text := _level_access_label(cave.id, true)
-			_draw_elevator_sign(marker + Vector2(38, 35) * icon_scale, access_text, cave.id != world.entry, icon_scale, _is_unopened_shaft(cave.id))
-		_draw_room_state_badge(marker, icon_scale, true)
+			_draw_elevator_sign(_world_to_screen(_level_access_position(cave.id)) + Vector2(38, 16) * icon_scale, access_text, cave.id != world.entry, icon_scale, _is_unopened_shaft(cave.id))
+		if _is_final_room(cave.id):
+			_draw_final_room_marker(_world_to_screen(cave.position), icon_scale)
+		var tasks := _room_tasks(cave.id)
+		if tasks.x == tasks.y:
+			_draw_room_complete_badge(self, marker, icon_scale)
+		else:
+			_draw_room_state_badge(marker, icon_scale, true)
 		if show_findings and _flora_is_visible_in_room(cave.id):
 			var plant_marker := marker + Vector2(-20, 0) * icon_scale
 			_draw_flora_symbol(self, plant_marker, 0.7 * icon_scale, flora_species_by_room[cave.id])
@@ -617,6 +679,11 @@ func _draw() -> void:
 				draw_string(ThemeDB.fallback_font, plant_marker + Vector2(-13, 2) * icon_scale, "!", HORIZONTAL_ALIGNMENT_LEFT, -1, maxi(7, roundi(12 * icon_scale)), ORANGE)
 		if _has_accessible_pending_galleries(cave.id):
 			_draw_room_state_badge(marker + Vector2(18, 0) * icon_scale, icon_scale, false)
+		if show_findings:
+			if _has_undetectable_trace(cave.id, false):
+				_draw_biological_trace(self, marker + Vector2(-15, -18) * icon_scale, false, icon_scale)
+			if _has_undetectable_trace(cave.id, true):
+				_draw_biological_trace(self, marker + Vector2(15, -18) * icon_scale, true, icon_scale)
 	for cave in world.caves:
 		if cave.id != current_cave_id and not _can_inspect_cave(cave.id):
 			continue
@@ -639,8 +706,75 @@ func _draw() -> void:
 	if explored_caves.has(world.entry):
 		_draw_beacon_light(_world_to_screen(world.caves[world.entry].position), icon_scale, LEVEL_EXIT_BEACON_COLOR)
 
-	_draw_dropped_materials()
 	_draw_rockfall()
+	_draw_map_room_tooltip()
+
+func _room_gallery_progress(cave_id: int) -> Vector2i:
+	var progress := Vector2i.ZERO
+	for corridor in world.corridors:
+		if corridor.a == cave_id or corridor.b == cave_id:
+			progress.y += 1
+			progress.x += int(completed_gallery_traces.has(corridor.id))
+	return progress
+
+func _room_tasks(cave_id: int) -> Vector2i:
+	var progress := _room_gallery_progress(cave_id)
+	progress += Vector2i(int(explored_caves.has(cave_id)), 1)
+	for pair in [[flora_sites, analyzed_flora], [fauna_sites, analyzed_fauna], [material_sites, collected_materials]]:
+		if pair[0].has(cave_id):
+			progress += Vector2i(int(pair[1].has(cave_id)), 1)
+	return progress
+
+func _draw_room_complete_badge(canvas: CanvasItem, center: Vector2, icon_scale: float) -> void:
+	var gold := Color("ffd17e")
+	canvas.draw_circle(center, 8.0 * icon_scale, PANEL, true, -1.0, true)
+	canvas.draw_circle(center, 8.0 * icon_scale, gold, false, 1.0, true)
+	var star := PackedVector2Array()
+	for index in range(10):
+		var radius := (5.8 if index % 2 == 0 else 2.6) * icon_scale
+		star.append(center + Vector2.from_angle(-PI * 0.5 + TAU * index / 10.0) * radius)
+	canvas.draw_colored_polygon(star, gold)
+
+func _draw_map_room_tooltip() -> void:
+	var mouse := get_global_mouse_position()
+	if dragging or _over_ui(mouse):
+		return
+	var cave_id := _cave_at_position(_screen_to_world(mouse))
+	if cave_id < 0 or not _can_inspect_cave(cave_id):
+		return
+	var scanned := explored_caves.has(cave_id)
+	var title := "Sala %02d" % (cave_id + 1)
+	var lines := PackedStringArray()
+	var complete := false
+	if scanned:
+		var progress := _room_tasks(cave_id)
+		complete = progress.x == progress.y
+		title += " · %d%% de tasques" % floori(100.0 * progress.x / progress.y)
+		if complete:
+			title += " · Completa"
+		var galleries := _room_gallery_progress(cave_id)
+		lines = PackedStringArray(["Escaneig complet", "Galeries recorregudes · %d/%d" % [galleries.x, galleries.y]])
+		for item in [
+			[flora_sites, analyzed_flora, "Flora analitzada", "Flora pendent d’analitzar"],
+			[fauna_sites, analyzed_fauna, "Fauna observada", "Fauna pendent d’observar"],
+			[material_sites, collected_materials, "Veta extreta", "Veta pendent de minar"],
+		]:
+			if item[0].has(cave_id):
+				lines.append(item[2] if item[1].has(cave_id) else item[3])
+		if _room_needs_ferric_filter(cave_id):
+			lines.append("Cal el filtre espectral fèrric")
+	else:
+		lines.append("Escaneig · %d%%" % floori(_room_reveal_ratio(world.caves[cave_id]) * 100.0))
+	var size := Vector2(268, 40 + lines.size() * 18)
+	var view := _view_rect()
+	var limit := Vector2(maxf(view.position.x, view.end.x - size.x - 8.0), maxf(8.0, navigation_panel.position.y - size.y - 8.0))
+	var origin := (mouse + Vector2(16, 18)).clamp(Vector2(view.position.x, 8.0), limit)
+	var box := Rect2(origin, size)
+	draw_rect(box, PANEL)
+	draw_rect(box, Color("ffd17e") if complete else Color("448b99"), false, 1.0)
+	draw_string(ThemeDB.fallback_font, origin + Vector2(12, 22), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("ffd17e") if complete else CYAN)
+	for index in range(lines.size()):
+		draw_string(ThemeDB.fallback_font, origin + Vector2(12, 43 + index * 18), lines[index], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("dcecf0"))
 
 func _update_rockfall(delta: float) -> void:
 	rockfall_cooldown = maxf(0.0, rockfall_cooldown - delta)
@@ -781,17 +915,6 @@ func _draw_rockfall() -> void:
 			var phase := fposmod(elapsed * 1.15 + float(index) * 0.21, 1.0)
 			var offset := Vector2(sin(float(index) * 4.1) * (7.0 + phase * 15.0), lerpf(-24.0, 8.0, phase))
 			draw_circle(center + offset * scale, (2.0 + phase * 3.0) * scale, Color(0.91, 0.63, 0.40, 0.65 * (1.0 - phase)), true, -1.0, true)
-
-func _draw_dropped_materials() -> void:
-	for cargo in dropped_materials:
-		if cargo.level != current_level or not _is_revealed(cargo.position):
-			continue
-		var scale := _isometric_object_scale() if analysis_mode else clampf(zoom_level / MAP_ENTRY_ZOOM, 0.42, 1.15)
-		var marker := _world_to_screen(cargo.position)
-		var box := Rect2(marker - Vector2(8, 5) * scale, Vector2(16, 10) * scale)
-		draw_rect(box, PANEL)
-		draw_rect(box, ORANGE, false, 1.3 * scale)
-		draw_line(marker - Vector2(0, 5) * scale, marker + Vector2(0, 5) * scale, ORANGE, 1.2 * scale)
 
 func _draw_signal_ranges() -> void:
 	if not show_signal_rings or taking_field_photo:
@@ -1130,7 +1253,7 @@ func _draw_surface_base() -> void:
 		var amount := float(step) / 8.0
 		draw_circle(path_start.lerp(hatch, amount), 2.2, Color("dd8a4c", 0.72))
 	_draw_elevator_platform(hatch, Vector2(56, 32))
-	_draw_elevator_sign(hatch + Vector2(0, 55), "BAIXA AL NIVELL -1", true, 1.15)
+	_draw_elevator_sign(hatch + Vector2(0, 55), "BAIXA A L’ESTRAT -1", true, 1.15)
 	# Small suit marker beside the hatch: the explorer starts at the base.
 	var explorer := hatch + Vector2(-87, -17)
 	draw_circle(explorer + Vector2(0, 8), 10, Color("101014"))
@@ -1253,16 +1376,34 @@ func _draw_isometric_room_features(cave_id: int) -> void:
 
 func _draw_isometric_room_fixtures(cave: Dictionary) -> void:
 	var beacon_position := _world_to_screen(cave.position)
+	if _is_final_room(cave.id) and explored_caves.has(cave.id):
+		_draw_final_room_marker(beacon_position, _isometric_object_scale())
 	var beacon_scale := minf(zoom_level / 4.0, 1.6)
 	if deployed_beacons.has(cave.id):
 		_draw_beacon_light(beacon_position + Vector2(0, -18) * _isometric_object_scale(), beacon_scale, Color("abbeff"))
 	if cave.id == world.entry:
 		_draw_beacon_light(beacon_position, beacon_scale, LEVEL_EXIT_BEACON_COLOR)
+		if _is_biome_workshop(cave.id) and _isometric_object_scale() >= 0.60:
+			draw_string(ThemeDB.fallback_font, beacon_position + Vector2(-55, -33) * _isometric_object_scale(),
+				"TALLER DEL BIOMA", HORIZONTAL_ALIGNMENT_LEFT, -1, maxi(8, roundi(12 * _isometric_object_scale())), CYAN)
 	if _has_level_elevator(cave.id):
 		var scale := _isometric_object_scale()
 		if scale >= 0.45:
-			var access_label_position := beacon_position + Vector2(0, _underground_elevator_extent().y + 20.0 * scale)
+			var access_label_position := _world_to_screen(_level_access_position(cave.id)) + Vector2(0, _underground_elevator_extent().y + 20.0 * scale)
 			_draw_elevator_sign(access_label_position, _level_access_label(cave.id), cave.id != world.entry, scale, _is_unopened_shaft(cave.id))
+
+func _is_final_room(cave_id: int) -> bool:
+	return current_level == CAMPAIGN_DEPTH and cave_id >= 0 and cave_id == world.get("objective", -1)
+
+func _draw_final_room_marker(center: Vector2, marker_scale: float) -> void:
+	var radius := 10.0 * marker_scale
+	var diamond := PackedVector2Array([Vector2.UP, Vector2.RIGHT, Vector2.DOWN, Vector2.LEFT])
+	for index in range(diamond.size()):
+		diamond[index] = center + diamond[index] * radius
+	draw_colored_polygon(diamond, PANEL)
+	diamond.append(diamond[0])
+	draw_polyline(diamond, CYAN, 1.5, true)
+	draw_circle(center, radius * 0.36, CYAN)
 
 func _draw_isometric_room_terrain(cave: Dictionary) -> void:
 	var contour: PackedVector2Array = cave.contour
@@ -1303,11 +1444,19 @@ func _draw_isometric_room_badges() -> void:
 		return
 	var center := Vector2(room_progress_label.size.x * 0.5, 50.0)
 	var completed := explored_caves.has(cave_id)
+	if completed and _room_needs_ferric_filter(cave_id):
+		room_progress_label.draw_string(ThemeDB.fallback_font, Vector2(0, 73),
+			"ESCÀNER · CAL EL FILTRE ESPECTRAL FÈRRIC", HORIZONTAL_ALIGNMENT_CENTER,
+			room_progress_label.size.x, 12, Color("ffd17e"))
 	var badges: Array[String] = []
 	if show_findings and _flora_is_visible_in_room(cave_id):
 		badges.append("flora")
+	elif show_findings and completed and _has_undetectable_trace(cave_id, false):
+		badges.append("flora_trace")
 	if show_findings and _fauna_is_visible_in_room(cave_id):
 		badges.append("fauna")
+	elif show_findings and completed and _has_undetectable_trace(cave_id, true):
+		badges.append("fauna_trace")
 	if _mineral_site_discovered(cave_id) and not collected_materials.has(cave_id):
 		badges.append("mineral")
 	if completed:
@@ -1327,6 +1476,8 @@ func _draw_isometric_room_badges() -> void:
 				_draw_blocked_exit_badge(room_progress_label, marker, 0.75)
 			"mineral":
 				_draw_pending_mineral_badge(room_progress_label, marker)
+			"flora_trace", "fauna_trace":
+				_draw_biological_trace(room_progress_label, marker, badges[index] == "fauna_trace")
 			"flora":
 				_draw_flora_symbol(room_progress_label, marker, 0.8, flora_species_by_room[cave_id])
 				if not analyzed_flora.has(cave_id):
@@ -1336,6 +1487,18 @@ func _draw_isometric_room_badges() -> void:
 				_draw_fauna_map_badge(room_progress_label, marker, fauna_species_by_room.get(cave_id, "escarabat"), 1.0, observed)
 				if not observed:
 					room_progress_label.draw_string(ThemeDB.fallback_font, marker + Vector2(-13, 4), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ORANGE)
+
+func _draw_biological_trace(canvas: CanvasItem, center: Vector2, fauna: bool, marker_scale: float = 1.0) -> void:
+	var ink := Color("f3bb70") if fauna else Color("93d8ab")
+	canvas.draw_arc(center, 8.0 * marker_scale, -PI * 0.35, PI * 1.4, 16, ink, 1.0, true)
+	if fauna:
+		for offset in [Vector2(-3, -2), Vector2(2, -4), Vector2(0, 2)]:
+			canvas.draw_circle(center + offset * marker_scale, 1.65 * marker_scale, ink, true, -1.0, true)
+	else:
+		canvas.draw_polyline(PackedVector2Array([center + Vector2(0, 5) * marker_scale, center,
+			center + Vector2(-4, -4) * marker_scale, center, center + Vector2(4, -5) * marker_scale]), ink, 1.4, true)
+	canvas.draw_string(ThemeDB.fallback_font, center + Vector2(6, 5) * marker_scale,
+		"?", HORIZONTAL_ALIGNMENT_LEFT, -1, maxi(7, roundi(12 * marker_scale)), ink)
 
 func _draw_pending_mineral_badge(canvas: CanvasItem, center: Vector2) -> void:
 	var rock := PackedVector2Array([
@@ -1347,6 +1510,7 @@ func _draw_pending_mineral_badge(canvas: CanvasItem, center: Vector2) -> void:
 		center + Vector2(-6, 2), center + Vector2(-2, -2),
 		center + Vector2(1, 0), center + Vector2(6, -3),
 	]), Color("f6cb75"), 1.7, true)
+	canvas.draw_string(ThemeDB.fallback_font, center + Vector2(10, 4), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ORANGE)
 
 func _draw_blocked_exit_badge(canvas: CanvasItem, center: Vector2, marker_scale: float) -> void:
 	canvas.draw_circle(center, 10.0 * marker_scale, PANEL, true, -1.0, true)
@@ -1375,7 +1539,7 @@ func _has_level_elevator(cave_id: int) -> bool:
 	return cave_id >= 0 and (cave_id == world.get("entry", -1) or _has_descent_elevator(cave_id))
 
 func _has_descent_elevator(cave_id: int) -> bool:
-	return current_level >= 1 and current_level < OXIDIZED_CAVES_DEPTH and cave_id >= 0 and cave_id == descent_access and explored_caves.has(cave_id)
+	return current_level >= 1 and current_level < CAMPAIGN_DEPTH and cave_id >= 0 and cave_id == descent_access and explored_caves.has(cave_id)
 
 func _draw_beacon_waves(center: Vector2, reach: float, vertical_ratio: float, color: Color) -> void:
 	var cycle_seconds := 12.8
@@ -1457,8 +1621,14 @@ func _draw_isometric_fauna(position: Vector2, cave_id: int) -> void:
 		direction = origin.direction_to(fauna_patrol_ends[cave_id])
 	direction *= 0.38
 	var across := direction.orthogonal()
-	if fauna_species_by_room.get(cave_id) == "isopode":
-		_draw_isometric_isopod(position, direction, across)
+	var species_id: String = fauna_species_by_room.get(cave_id, "escarabat")
+	var variant := _fauna_variant(species_id)
+	if not variant.is_empty():
+		_draw_fauna_variant(self, _world_to_screen(position), species_id, variant, _isometric_object_scale())
+		return
+	var color := _fauna_color(species_id)
+	if _fauna_is_segmented(species_id):
+		_draw_isometric_isopod(position, direction, across, color)
 		return
 	draw_colored_polygon(_fauna_ground_ellipse(position, direction, across, Vector2(8, 5)), Color("231b1c"))
 	for stride in [-4.0, 0.0, 4.0]:
@@ -1467,11 +1637,11 @@ func _draw_isometric_fauna(position: Vector2, cave_id: int) -> void:
 			var foot: Vector2 = joint + across * side * 4.0 - direction * 1.5
 			draw_line(_world_to_screen(joint), _world_to_screen(foot), Color("ce9454"), 1.6, true)
 	var shell := _fauna_ground_ellipse(position, direction, across, Vector2(6, 3.8))
-	draw_colored_polygon(shell, Color("e56d58") if fauna_species_by_room.get(cave_id) == "escarabat_ferric" else ORANGE)
+	draw_colored_polygon(shell, color)
 	draw_colored_polygon(_fauna_ground_ellipse(position + direction * 5.0, direction, across, Vector2(2.7, 2.2)), Color("b67642"))
 	draw_line(_world_to_screen(position - direction * 4.0), _world_to_screen(position + direction * 4.0), Color("945632"), 1.2, true)
 
-func _draw_isometric_isopod(position: Vector2, axis: Vector2, across: Vector2) -> void:
+func _draw_isometric_isopod(position: Vector2, axis: Vector2, across: Vector2, color: Color) -> void:
 	draw_colored_polygon(_fauna_ground_ellipse(position, axis, across, Vector2(11, 5)), Color("202532"))
 	for segment in range(-2, 3):
 		var center := position + axis * (float(segment) * 3.2)
@@ -1480,7 +1650,7 @@ func _draw_isometric_isopod(position: Vector2, axis: Vector2, across: Vector2) -
 			var foot: Vector2 = center + across * side * (width + 2.0) - axis * 1.0
 			draw_line(_world_to_screen(center), _world_to_screen(foot), Color("9da9bb"), 1.2, true)
 		var plate := _fauna_ground_ellipse(center, axis, across, Vector2(2.6, width))
-		draw_colored_polygon(plate, Color("7f9cbe") if segment % 2 == 0 else Color("57718e"))
+		draw_colored_polygon(plate, color if segment % 2 == 0 else color.darkened(0.27))
 
 func _fauna_ground_ellipse(center: Vector2, axis: Vector2, across: Vector2, radii: Vector2) -> PackedVector2Array:
 	var polygon := PackedVector2Array()
@@ -1490,7 +1660,7 @@ func _fauna_ground_ellipse(center: Vector2, axis: Vector2, across: Vector2, radi
 	return polygon
 
 func _draw_isometric_base_access(cave: Dictionary) -> void:
-	var center := _world_to_screen(cave.position)
+	var center := _world_to_screen(_level_access_position(cave.id))
 	var extent := _underground_elevator_extent()
 	if not _is_unopened_shaft(cave.id):
 		var scale := _isometric_object_scale()
@@ -1547,11 +1717,11 @@ func _level_access_label(cave_id: int, short: bool = false) -> String:
 		var depth := -(current_level + 1)
 		if _is_unopened_shaft(cave_id):
 			return "Forat · %d" % depth if short else ("BAIXA AMB L’ESCALA · %d" % depth if _ladder_uses_left() > 0 else "ESCALA ESGOTADA")
-		return "Nivell %d" % depth if short else "BAIXA AL NIVELL %d" % depth
+		return "Estrat %d" % depth if short else "BAIXA A L’ESTRAT %d" % depth
 	if current_level == 1:
 		return "Base · 0" if short else "PUJA A LA BASE · 0"
 	var depth := -(current_level - 1)
-	return "Nivell %d" % depth if short else "PUJA AL NIVELL %d" % depth
+	return "Estrat %d" % depth if short else "PUJA A L’ESTRAT %d" % depth
 
 func _draw_elevator_icon(canvas: CanvasItem, center: Vector2, down: bool, scale: float) -> void:
 	var size := Vector2(16, 18) * scale
@@ -1673,18 +1843,19 @@ func _get_cave_floor_texture(cave_id: int) -> Texture2D:
 	detail.seed = cave_seed ^ 0x5f3759df
 	detail.frequency = 0.12
 	var image := Image.create(256, 256, false, Image.FORMAT_RGBA8)
-	var dark_rock := Color("352528")
-	var warm_rock := Color("68473a")
+	var palette: Array = BIOME_ROCK[Generator.biome_at_depth(current_level)]
+	var dark_rock := Color(palette[0])
+	var warm_rock := Color(palette[1])
 	match _room_environment(cave_id):
 		"aigua":
-			dark_rock = Color("24363b")
-			warm_rock = Color("3d6466")
+			dark_rock = dark_rock.lerp(Color("24363b"), 0.55)
+			warm_rock = warm_rock.lerp(Color("3d6466"), 0.55)
 		"gel":
-			dark_rock = Color("353b50")
-			warm_rock = Color("627f9b")
+			dark_rock = dark_rock.lerp(Color("353b50"), 0.55)
+			warm_rock = warm_rock.lerp(Color("627f9b"), 0.55)
 		"calent":
-			dark_rock = Color("482522")
-			warm_rock = Color("a25332")
+			dark_rock = dark_rock.lerp(Color("482522"), 0.55)
+			warm_rock = warm_rock.lerp(Color("a25332"), 0.55)
 	for y in range(256):
 		for x in range(256):
 			var broad_value: float = coarse.get_noise_2d(float(x), float(y))
@@ -1734,7 +1905,8 @@ func _draw_procedural_rock_details(cave: Dictionary) -> void:
 		# visibility, never which rocks get generated or where later rocks land.
 		if not explored_caves.has(cave.id) and not rock_is_revealed:
 			continue
-		var rock_color: Color = [Color("5b4039"), Color("4a3436"), Color("60463b"), Color("3c3033")][color_index]
+		var palette: Array = BIOME_ROCK[Generator.biome_at_depth(current_level)]
+		var rock_color := Color(palette[0]).lerp(Color(palette[1]), 0.46 + color_index * 0.09)
 		var shadow := PackedVector2Array()
 		for point in rock:
 			shadow.append(point + Vector2(0.0, maxf(1.0, zoom_level * 0.12)))
@@ -1816,7 +1988,7 @@ func _draw_isometric_contour(cave: Dictionary) -> void:
 		for point in edge:
 			screen.append(_world_to_screen(point))
 		if screen.size() >= 2:
-			draw_polyline(screen, Color("805043"), maxf(1.2, zoom_level * 0.3), true)
+			draw_polyline(screen, Color(BIOME_ROCK[Generator.biome_at_depth(current_level)][2]), maxf(1.2, zoom_level * 0.3), true)
 
 func _draw_isometric_corridors(cave: Dictionary, passage_id: int) -> void:
 	# Draw each gallery as a coplanar textured floor strip. The same world-space
@@ -2150,13 +2322,42 @@ func _build_profiles_dialog() -> void:
 	create_button.custom_minimum_size.y = 34
 	create_button.pressed.connect(_create_local_profile)
 	contents.add_child(create_button)
+	var history_button := _button("HISTORIAL D’EXPEDICIONS", Vector2.ZERO, Vector2(0, 34), true)
+	history_button.custom_minimum_size.y = 34
+	history_button.pressed.connect(func() -> void:
+		profiles_dialog.hide()
+		_show_expedition_history.call_deferred())
+	contents.add_child(history_button)
+	history_dialog = AcceptDialog.new()
+	history_dialog.title = "Historial d’expedicions"
+	history_dialog.ok_button_text = "TANCA"
+	history_dialog.exclusive = true
+	add_child(history_dialog)
+	history_text = RichTextLabel.new()
+	history_dialog.add_child(history_text)
 	var restart_button := _button("REINICIA LA RUN", Vector2.ZERO, Vector2(0, 34), true)
 	restart_button.custom_minimum_size.y = 34
 	restart_button.pressed.connect(_confirm_run_restart)
 	contents.add_child(restart_button)
+	delete_profile_button = _button("ELIMINA EL PERFIL SELECCIONAT", Vector2.ZERO, Vector2(0, 34), true)
+	delete_profile_button.custom_minimum_size.y = 34
+	delete_profile_button.add_theme_color_override("font_color", BLOCKED_GALLERY_COLOR)
+	delete_profile_button.pressed.connect(_confirm_delete_profile)
+	contents.add_child(delete_profile_button)
+	delete_profile_dialog = ConfirmationDialog.new()
+	delete_profile_dialog.title = "Elimina totes les dades del perfil"
+	delete_profile_dialog.ok_button_text = "ELIMINA DEFINITIVAMENT"
+	delete_profile_dialog.cancel_button_text = "CANCEL·LA"
+	delete_profile_dialog.dialog_autowrap = true
+	delete_profile_dialog.exclusive = true
+	delete_profile_dialog.confirmed.connect(_delete_selected_profile, CONNECT_DEFERRED)
+	delete_profile_dialog.canceled.connect(func() -> void:
+		pending_profile_deletion = ""
+		_open_profiles.call_deferred())
+	add_child(delete_profile_dialog)
 	restart_run_dialog = ConfirmationDialog.new()
 	restart_run_dialog.title = "Reinicia l’expedició"
-	restart_run_dialog.dialog_text = "Començaràs a la superfície, amb l’equip inicial i una llavor nova. Es perdran les descobertes, els recursos i les caixes pendents de l’expedició actual."
+	restart_run_dialog.dialog_text = "Començaràs a la superfície, amb l’equip inicial i una llavor nova. El mapa i els recursos es reiniciaran. El catàleg biològic i l’historial es conservaran."
 	restart_run_dialog.dialog_autowrap = true
 	restart_run_dialog.ok_button_text = "REINICIA"
 	restart_run_dialog.cancel_button_text = "CANCEL·LA"
@@ -2170,27 +2371,102 @@ func _confirm_run_restart() -> void:
 	restart_run_dialog.popup_centered(Vector2i(460, 0))
 
 func _restart_current_run() -> void:
-	var previous := {}
-	if not active_profile_id.is_empty():
-		if not _save_active_profile():
-			_open_profiles()
-			profiles_status.text = "No s’ha pogut desar la partida abans de reiniciar."
-			return
-		previous = _capture_saved_game()
+	if not _save_active_profile():
+		_open_profiles()
+		profiles_status.text = "No s’ha pogut desar la partida abans de reiniciar."
+		return
+	var previous := _capture_saved_game()
 	_start_run_with_new_seed()
-	if not previous.is_empty() and not _save_active_profile():
+	if not _save_active_profile():
 		_restore_saved_game(previous)
 		_open_profiles()
 		profiles_status.text = "No s’ha pogut desar la run nova. S’ha recuperat l’expedició anterior."
 
 func _open_profiles() -> void:
 	_refresh_profiles_list()
-	profiles_status.text = "Perfil actiu: %s" % active_profile_name if not active_profile_id.is_empty() else "Crea un perfil per desar la partida o carrega’n un."
+	profiles_status.text = "Desament automàtic · %s" % (active_profile_name if not active_profile_id.is_empty() else "Partida local")
 	profiles_dialog.popup_centered(Vector2i(460, 0))
+
+func _confirm_delete_profile() -> void:
+	var index := profiles_list.selected
+	if index < 0:
+		return
+	pending_profile_deletion = profiles_list.get_item_metadata(index)
+	delete_profile_dialog.dialog_text = "Vols eliminar «%s»? S’esborraran la partida, la còpia de reserva, les fites, l’historial, el catàleg biològic i les fotos. Aquesta acció és irreversible." % profiles_list.get_item_text(index)
+	profiles_dialog.hide()
+	delete_profile_dialog.popup_centered(Vector2i(460, 0))
+
+func _clear_profile_progress() -> void:
+	deepest_reached = 0
+	expedition_history.clear()
+	expedition_record.clear()
+	biological_register.clear()
+	biological_photos.clear()
+
+func _delete_selected_profile() -> void:
+	var id := pending_profile_deletion
+	pending_profile_deletion = ""
+	if LocalSaveStore.delete_profile(id) != OK:
+		_open_profiles()
+		profiles_status.text = "No s’han pogut eliminar tots els fitxers del perfil."
+		return
+	var current_slot := LocalSaveStore.AUTOMATIC_SLOT if active_profile_id.is_empty() else active_profile_id
+	if id == current_slot:
+		active_profile_id = ""
+		active_profile_name = ""
+		autosave_elapsed = 0.0
+		LocalSaveStore.remember_active_slot(LocalSaveStore.AUTOMATIC_SLOT)
+		_clear_profile_progress()
+		_start_run_with_new_seed()
+		if id != LocalSaveStore.AUTOMATIC_SLOT:
+			_resume_autosave()
+	_open_profiles()
+	profiles_status.text = "Perfil eliminat."
+
+func _new_expedition_record(run_seed: int, depth: int = 0) -> Dictionary:
+	return {"seed": run_seed, "depth": depth, "started": Time.get_datetime_string_from_system(false, true),
+		"ended": "", "outcome": "En curs", "reason": "", "milestones": []}
+
+func _finish_expedition_record(outcome: String, reason: String = "") -> void:
+	if expedition_record.is_empty() or expedition_record.outcome == "Mort":
+		return
+	expedition_record.outcome = outcome
+	expedition_record.reason = reason
+	expedition_record.ended = Time.get_datetime_string_from_system(false, true)
+
+func _record_expedition_milestone(title: String) -> void:
+	if not expedition_record.is_empty():
+		expedition_record.milestones.append({"title": title, "depth": current_level,
+			"date": Time.get_datetime_string_from_system(false, true)})
+
+func _show_expedition_history() -> void:
+	var records := expedition_history.duplicate()
+	records.append(expedition_record)
+	var deaths := 0
+	for record in records:
+		if record.outcome == "Mort":
+			deaths += 1
+	var lines := PackedStringArray(["Expedicions: %d   ·   Morts: %d   ·   Rècord de profunditat: %d" % [records.size(), deaths, -deepest_reached]])
+	for index in range(records.size() - 1, -1, -1):
+		var record: Dictionary = records[index]
+		lines.append("\nExpedició %d · %s · Profunditat: %d · Llavor: %d" % [index + 1, record.outcome, -int(record.depth), record.seed])
+		lines.append("Inici: %s%s" % [record.started, " · Final: " + record.ended if not record.ended.is_empty() else ""])
+		if not record.reason.is_empty():
+			lines.append(record.reason)
+		for milestone in record.milestones:
+			lines.append("  %s · Estrat %d · %s" % [milestone.date, -int(milestone.depth), milestone.title])
+	history_text.text = "\n".join(lines)
+	history_dialog.popup_centered(Vector2i(620, 480))
+	history_text.scroll_to_line(0)
 
 func _refresh_profiles_list() -> void:
 	profiles_list.clear()
 	var profiles := LocalSaveStore.list_profiles()
+	if active_profile_id.is_empty() or not LocalSaveStore.read_profile(LocalSaveStore.AUTOMATIC_SLOT).is_empty():
+		profiles_list.add_item("Partida local")
+		profiles_list.set_item_metadata(0, LocalSaveStore.AUTOMATIC_SLOT)
+		if active_profile_id.is_empty():
+			profiles_list.select(0)
 	var ids := profiles.keys()
 	ids.sort_custom(func(a: String, b: String) -> bool: return profiles[a].naturalnocasecmp_to(profiles[b]) < 0)
 	for id in ids:
@@ -2204,8 +2480,9 @@ func _refresh_profiles_list() -> void:
 	_refresh_profile_buttons()
 
 func _refresh_profile_buttons() -> void:
-	save_profile_button.disabled = active_profile_id.is_empty()
+	save_profile_button.disabled = false
 	load_profile_button.disabled = profiles_list.selected < 0
+	delete_profile_button.disabled = profiles_list.selected < 0
 
 func _create_local_profile() -> void:
 	var profile_name := profile_name_input.text.strip_edges()
@@ -2222,6 +2499,7 @@ func _create_local_profile() -> void:
 			profiles_status.text = "No s’ha pogut desar la partida activa."
 			return
 		var previous := _capture_saved_game()
+		_clear_profile_progress()
 		_new_world(randi_range(0, 0x7fffffff))
 		if LocalSaveStore.write_profile(id, profile_name, _capture_saved_game()) != OK:
 			_restore_saved_game(previous)
@@ -2230,8 +2508,11 @@ func _create_local_profile() -> void:
 	elif LocalSaveStore.write_profile(id, profile_name, _capture_saved_game()) != OK:
 		profiles_status.text = "No s’ha pogut crear el perfil."
 		return
+	else:
+		LocalSaveStore.delete_profile(LocalSaveStore.AUTOMATIC_SLOT)
 	active_profile_id = id
 	active_profile_name = profile_name
+	LocalSaveStore.remember_active_slot(id)
 	autosave_elapsed = 0.0
 	seed_edit.text = str(seed_value)
 	profile_name_input.clear()
@@ -2239,30 +2520,46 @@ func _create_local_profile() -> void:
 	profiles_status.text = "Perfil creat i partida desada: %s" % profile_name
 
 func _manual_save_profile() -> void:
-	profiles_status.text = "Partida desada: %s" % active_profile_name if _save_active_profile() else "No s’ha pogut desar la partida."
+	profiles_status.text = "Partida desada." if _save_active_profile() else "No s’ha pogut desar la partida."
 
 func _load_selected_profile() -> void:
 	if profiles_list.selected < 0:
 		return
 	var id: String = profiles_list.get_item_metadata(profiles_list.selected)
+	if not _save_active_profile():
+		profiles_status.text = "No s’ha pogut desar la partida activa."
+		return
 	var profile := LocalSaveStore.read_profile(id, _valid_saved_game)
 	if profile.is_empty():
 		profiles_status.text = "La partida no es pot carregar o té un format incompatible."
 		return
-	if not active_profile_id.is_empty() and active_profile_id != id and not _save_active_profile():
-		profiles_status.text = "No s’ha pogut desar la partida activa."
-		return
-	active_profile_id = id
-	active_profile_name = profile.name
+	active_profile_id = "" if id == LocalSaveStore.AUTOMATIC_SLOT else id
+	active_profile_name = "" if active_profile_id.is_empty() else profile.name
+	LocalSaveStore.remember_active_slot(id)
 	autosave_elapsed = 0.0
 	profiles_dialog.hide()
 	_restore_saved_game(profile.game)
 
+func _resume_autosave() -> void:
+	var id := LocalSaveStore.active_slot()
+	var profile := LocalSaveStore.read_profile(id, _valid_saved_game)
+	if profile.is_empty() and id != LocalSaveStore.AUTOMATIC_SLOT:
+		id = LocalSaveStore.AUTOMATIC_SLOT
+		profile = LocalSaveStore.read_profile(id, _valid_saved_game)
+	if profile.is_empty():
+		return
+	if id != LocalSaveStore.AUTOMATIC_SLOT:
+		active_profile_id = id
+		active_profile_name = profile.name
+	_restore_saved_game(profile.game)
+
 func _save_active_profile() -> bool:
 	autosave_elapsed = 0.0
-	if active_profile_id.is_empty() or world.is_empty():
+	if world.is_empty():
 		return false
-	return LocalSaveStore.write_profile(active_profile_id, active_profile_name, _capture_saved_game()) == OK
+	var id := LocalSaveStore.AUTOMATIC_SLOT if active_profile_id.is_empty() else active_profile_id
+	var profile_name := "Partida local" if active_profile_id.is_empty() else active_profile_name
+	return LocalSaveStore.write_profile(id, profile_name, _capture_saved_game()) == OK
 
 func _capture_saved_game() -> Dictionary:
 	var game := {}
@@ -2275,11 +2572,20 @@ func _capture_saved_game() -> Dictionary:
 	game["inactive_levels"] = levels
 	var photos := {}
 	for species in field_photos:
-		var texture: Texture2D = field_photos[species]
-		photos[species] = texture.get_image().save_png_to_buffer()
+		if not saved_photo_bytes.has(species):
+			var texture: Texture2D = field_photos[species]
+			saved_photo_bytes[species] = texture.get_image().save_png_to_buffer()
+		photos[species] = saved_photo_bytes[species]
 	game["photos"] = photos
 	game["death_message"] = death_dialog.dialog_text if death_dialog.visible else ""
 	game["depth_trip_target"] = depth_trip_target
+	game["expedition_completed"] = expedition_completed
+	game["deepest_reached"] = deepest_reached
+	game["starting_rewards_depth"] = starting_rewards_depth
+	game["expedition_history"] = expedition_history
+	game["expedition_record"] = expedition_record
+	game["biological_register"] = biological_register
+	game["biological_photos"] = biological_photos
 	return game.duplicate(true)
 
 func _serializable_level(state: Dictionary) -> Dictionary:
@@ -2300,7 +2606,7 @@ func _valid_saved_game(game: Dictionary) -> bool:
 	for field in SAVED_GAME_FIELDS:
 		if not game.has(field) or typeof(game[field]) != typeof(get(field)):
 			return false
-	if game.current_level < 0 or game.current_level > OXIDIZED_CAVES_DEPTH or not game.get("level") is Dictionary or not _valid_saved_level(game.level):
+	if game.current_level < 0 or game.current_level > CAMPAIGN_DEPTH or not game.get("level") is Dictionary or not _valid_saved_level(game.level):
 		return false
 	if not game.get("inactive_levels") is Dictionary or not game.get("photos") is Dictionary or not game.get("death_message") is String:
 		return false
@@ -2310,7 +2616,8 @@ func _valid_saved_game(game: Dictionary) -> bool:
 	return true
 
 func _restore_saved_game(game: Dictionary) -> void:
-	depth_trip_target = clampi(int(game.get("depth_trip_target", -1)), -1, OXIDIZED_CAVES_DEPTH)
+	expedition_completed = bool(game.get("expedition_completed", false))
+	depth_trip_target = clampi(int(game.get("depth_trip_target", -1)), -1, CAMPAIGN_DEPTH)
 	for field in SAVED_GAME_FIELDS:
 		var current = get(field)
 		if current is Array or current is Dictionary:
@@ -2318,17 +2625,40 @@ func _restore_saved_game(game: Dictionary) -> void:
 		else:
 			set(field, game[field])
 	inactive_levels = game.inactive_levels
+	expedition_history.assign(game.get("expedition_history", []))
+	expedition_record = game.get("expedition_record", {})
+	biological_register = game.get("biological_register", {})
+	biological_photos = game.get("biological_photos", {})
+	deepest_reached = clampi(int(game.get("deepest_reached", 0)), 0, CAMPAIGN_DEPTH)
+	deepest_reached = maxi(deepest_reached, current_level)
+	for depth in inactive_levels:
+		deepest_reached = maxi(deepest_reached, clampi(int(depth), 0, CAMPAIGN_DEPTH))
+	starting_rewards_depth = clampi(int(game.get("starting_rewards_depth", 0)), 0, deepest_reached)
+	if expedition_record.is_empty():
+		var depth := current_level
+		for previous_depth in inactive_levels:
+			depth = maxi(depth, int(previous_depth))
+		expedition_record = _new_expedition_record(seed_value, depth)
+		if not game.death_message.is_empty():
+			_finish_expedition_record("Mort", game.death_message.get_slice("\n", 0))
+		elif expedition_completed:
+			_finish_expedition_record("Completada")
 	for state in inactive_levels.values():
 		state["cave_floor_textures"] = {}
 	for field in LEVEL_STATE_FIELDS:
 		set(field, game.level.get(field, {}))
+	if current_level == 3 and descent_access < 0:
+		descent_access = _pick_descent_access()
 	helmet_light_zone_lit = surface_mode or _has_ambient_light(unit_position)
 	field_photos.clear()
+	saved_photo_bytes.clear()
 	for species in game.photos:
 		var bytes = game.photos[species]
 		var picture := Image.new()
 		if bytes is PackedByteArray and picture.load_png_from_buffer(bytes) == OK:
 			field_photos[species] = ImageTexture.create_from_image(picture)
+			saved_photo_bytes[species] = bytes
+	_remember_current_biology()
 	selected_route.assign(move_path)
 	dragging = false
 	warned_dark_movement = false
@@ -2342,16 +2672,17 @@ func _restore_saved_game(game: Dictionary) -> void:
 	_update_beacon_status()
 	queue_redraw()
 	if not game.death_message.is_empty():
-		death_dialog.dialog_text = game.death_message
+		death_dialog.dialog_text = _death_summary(game.death_message.get_slice("\n", 0))
 		death_dialog.popup_centered(Vector2i(440, 0))
 	elif depth_trip_target >= 0 and not moving:
 		_continue_depth_trip.call_deferred()
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_WM_CLOSE_REQUEST and is_instance_valid(seed_edit) and not active_profile_id.is_empty():
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and is_instance_valid(seed_edit):
 		_save_active_profile()
 
 func _build_ui() -> void:
+	_build_discovery_dialog()
 	death_dialog = AcceptDialog.new()
 	death_dialog.title = "Fi de la partida"
 	death_dialog.ok_button_text = "NOVA PARTIDA"
@@ -2359,6 +2690,13 @@ func _build_ui() -> void:
 	death_dialog.dialog_autowrap = true
 	add_child(death_dialog)
 	death_dialog.confirmed.connect(_restart_after_death)
+	victory_dialog = AcceptDialog.new()
+	victory_dialog.title = "Expedició completada"
+	victory_dialog.dialog_text = "Has completat la investigació del Nucli a l’estrat −20."
+	victory_dialog.dialog_autowrap = true
+	victory_dialog.ok_button_text = "TANCA"
+	victory_dialog.exclusive = true
+	add_child(victory_dialog)
 	death_dialog.canceled.connect(_restart_after_death)
 	ui_root = Control.new()
 	ui_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -2372,7 +2710,7 @@ func _build_ui() -> void:
 	profiles_button.pressed.connect(_open_profiles)
 	left.add_child(profiles_button)
 	_build_profiles_dialog()
-	mode_heading_label = _add_label(left, "MAPA DE RECERCA   /   NIVELL -1", 10, MUTED, Vector2(16, 42), Vector2(248, 18))
+	mode_heading_label = _add_label(left, "MAPA DE RECERCA   /   ESTRAT -1", 10, MUTED, Vector2(16, 42), Vector2(248, 18))
 	seed_edit = LineEdit.new()
 	seed_edit.position = Vector2(16, 76)
 	seed_edit.size = Vector2(145, 34)
@@ -2386,14 +2724,14 @@ func _build_ui() -> void:
 	map_return_button.visible = false
 	map_return_button.tooltip_text = "Torna a la vista general del mapa."
 	map_return_button.pressed.connect(_exit_inspection)
-	descend_button = _button("BAIXA AL NIVELL -1", Vector2(16, 62), Vector2(248, 26))
+	descend_button = _button("BAIXA A L’ESTRAT -1", Vector2(16, 62), Vector2(248, 26))
 	descend_button.visible = false
-	descend_button.tooltip_text = "Entra pel forat d'accés fins a la xarxa de coves del nivell -1."
+	descend_button.tooltip_text = "Entra pel forat d'accés fins a la xarxa de coves de l’estrat -1."
 	descend_button.pressed.connect(func() -> void: _confirm_depth_action(1, _descend_to_level_one))
 	left.add_child(descend_button)
 	base_return_button = _button("TORNA A LA BASE", Vector2(16, 62), Vector2(248, 26))
 	base_return_button.visible = false
-	base_return_button.tooltip_text = "Cal tornar a la sala d'entrada del nivell -1 per pujar a la superfície."
+	base_return_button.tooltip_text = "Cal tornar a la sala d'entrada de l’estrat -1 per pujar a la superfície."
 	base_return_button.pressed.connect(func() -> void: _confirm_depth_action(current_level - 1, _start_return_to_base))
 	left.add_child(base_return_button)
 	descend_navigation_button = _button("", Vector2(144, 130), Vector2(120, 30))
@@ -2416,6 +2754,16 @@ func _build_ui() -> void:
 	status_label = _add_label(left, "GENERADOR P0B · %s" % Generator.GENERATOR_VERSION, 10, Color("89b0bb"), Vector2(16, 100), Vector2(248, 30))
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_add_label(left, "PROFUNDITAT", 11, MUTED, Vector2(16, 138), Vector2(248, 18))
+	var rewards_button := _button("★ FITES", Vector2(180, 132), Vector2(84, 25), true)
+	rewards_button.add_theme_color_override("font_color", Color("ffd48a"))
+	rewards_button.pressed.connect(_show_depth_rewards)
+	left.add_child(rewards_button)
+	rewards_dialog = AcceptDialog.new()
+	rewards_dialog.title = "Fites de profunditat"
+	rewards_dialog.ok_button_text = "TANCA"
+	rewards_dialog.dialog_autowrap = true
+	rewards_dialog.exclusive = true
+	add_child(rewards_dialog)
 	_build_depth_selector(left)
 	var inventory_button := _button("INVENTARI", Vector2(12, 30), Vector2(256, 27), true)
 	inventory_button.pressed.connect(_open_inventory.bind(false))
@@ -2484,7 +2832,7 @@ func _build_ui() -> void:
 	inspect_room_button.tooltip_text = "Obre la sala on és l’explorador en vista isomètrica."
 	fit_map_button = _button("ENQUADRA EL MAPA", Vector2.ZERO, Vector2(172, 30), true)
 	fit_map_button.pressed.connect(_fit_discovered_map)
-	map_legend_panel = _panel(Rect2(0, 0, 280, 322))
+	map_legend_panel = _panel(Rect2(0, 0, 280, 391))
 	ui_root.add_child(map_legend_panel)
 	_add_label(map_legend_panel, "LLEGENDA DEL MAPA", 12, CYAN, Vector2(16, 8), Vector2(248, 20))
 	var legend_content := Control.new()
@@ -2499,13 +2847,15 @@ func _build_ui() -> void:
 	map_options_section.add_child(options_button)
 	var legend_icons := Control.new()
 	legend_icons.position = Vector2(16, 12)
-	legend_icons.size = Vector2(20, 320)
+	legend_icons.size = Vector2(20, 355)
 	legend_icons.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	legend_icons.draw.connect(func() -> void:
 		var explorer := Vector2(9, 9)
 		legend_icons.draw_circle(explorer, 5.0, ORANGE)
 		legend_icons.draw_circle(explorer, 8.0, Color("ffe2ba"), false, 1.4, true)
 		_draw_room_state_badge(Vector2(9, 32), 1.0, true, legend_icons)
+		_draw_room_complete_badge(legend_icons, Vector2(9, 55), 1.0)
+		legend_icons.draw_set_transform(Vector2(0, 23))
 		var entrance := Vector2(9, 55)
 		legend_icons.draw_circle(entrance, 5.0, ORANGE)
 		legend_icons.draw_circle(entrance, 8.5, Color(ORANGE, 0.25), false, 1.2, true)
@@ -2517,19 +2867,25 @@ func _build_ui() -> void:
 		_draw_blocked_exit_badge(legend_icons, Vector2(19, 136), 0.68)
 		_draw_flora_symbol(legend_icons, Vector2(9, 171), 0.85)
 		_draw_fauna_map_badge(legend_icons, Vector2(9, 194), "escarabat", 1.0, false)
+		for row_center in [171, 194]:
+			legend_icons.draw_string(ThemeDB.fallback_font, Vector2(19, row_center + 4), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ORANGE)
 		_draw_pending_mineral_badge(legend_icons, Vector2(9, 217))
-		legend_icons.draw_rect(Rect2(1, 247, 17, 10), Color("285571"))
-		legend_icons.draw_colored_polygon(PackedVector2Array([Vector2(9, 269), Vector2(15, 275), Vector2(9, 281), Vector2(3, 275)]), Color("abbeff"))
-		for divider_y in [95.5, 153.5, 234.5]:
-			legend_icons.draw_line(Vector2(0, divider_y), Vector2(248, divider_y), Color("1a4857")))
+		_draw_biological_trace(legend_icons, Vector2(9, 240), false)
+		_draw_biological_trace(legend_icons, Vector2(9, 263), true)
+		legend_icons.draw_rect(Rect2(1, 293, 17, 10), Color("285571"))
+		legend_icons.draw_colored_polygon(PackedVector2Array([Vector2(9, 315), Vector2(15, 321), Vector2(9, 327), Vector2(3, 321)]), Color("abbeff"))
+		for divider_y in [95.5, 153.5, 280.5]:
+			legend_icons.draw_line(Vector2(0, divider_y), Vector2(248, divider_y), Color("1a4857"))
+		legend_icons.draw_set_transform(Vector2.ZERO))
 	legend_content.add_child(legend_icons)
 	var legend_labels := [
-		"Explorador", "Sala escanejada", "Sala d’entrada · accés a la base", "Ascensor · pujada o baixada",
+		"Explorador", "Sala escanejada", "Sala completa · 100%", "Sala d’entrada · accés a la base", "Ascensor · pujada o baixada",
 		"Sortida accessible pendent de recórrer", "Sortida fora d’abast",
-		"Flora · ! pendent d’analitzar", "Fauna · ! pendent d’observar", "Veta de mineral pendent de minar",
+		"Flora · ! pendent d’analitzar", "Fauna · ! pendent d’observar", "Veta de mineral · ! pendent de minar",
+		"Rastres de flora · cal un filtre", "Rastres de fauna · cal un filtre",
 		"Galeria amb cobertura", "Balisa instal·lada",
 	]
-	var legend_row_centers := [9, 32, 55, 78, 113, 136, 171, 194, 217, 252, 275]
+	var legend_row_centers := [9, 32, 55, 78, 101, 136, 159, 194, 217, 240, 263, 286, 321, 344]
 	for index in range(legend_labels.size()):
 		_add_label(legend_content, legend_labels[index], 12, Color("dcecf0"), Vector2(43, legend_row_centers[index] + 2), Vector2(221, 20))
 	_build_level_progress_strip()
@@ -2586,8 +2942,11 @@ func _build_ui() -> void:
 	collect_flora_button = _new_equipment_icon_button("sample")
 	bio_action_bar.add_child(collect_flora_button)
 	collect_flora_button.pressed.connect(_collect_flora_sample)
-	lower_level_button = _button("BAIXA AL NIVELL -2", Vector2(12, 382), Vector2(196, 30))
+	lower_level_button = _button("BAIXA A L’ESTRAT -2", Vector2(12, 382), Vector2(196, 30))
 	lower_level_button.pressed.connect(func() -> void:
+		if _is_final_room(selected_cave):
+			_complete_final_research()
+			return
 		var destination: int = current_level - 1 if selected_cave == world.entry else current_level + 1
 		_confirm_depth_action(destination, _use_selected_level_access))
 	navigation_panel.add_child(lower_level_button)
@@ -2641,6 +3000,8 @@ func _update_equipment_action_pulses() -> void:
 	for button in equipment_action_buttons:
 		var available := button.is_visible_in_tree() and not button.disabled
 		if button == beacon_card_button and beacon_signal_meter.value > 0.0:
+			available = false
+		if button == medkit_button and health > 65.0:
 			available = false
 		if available:
 			pulsing_equipment_actions[button] = true
@@ -2780,7 +3141,7 @@ func _add_equipment_modifiers(offer: Label, slot: String) -> void:
 		contents.add_child(button)
 
 func _apply_equipment_modifier(id: String) -> void:
-	if not surface_mode:
+	if not _can_use_workshop():
 		return
 	if not owned_modifiers.has(id):
 		if not _can_upgrade_equipment(MODIFIER_MATERIAL_COST, MODIFIER_RESEARCH_COST):
@@ -2788,6 +3149,7 @@ func _apply_equipment_modifier(id: String) -> void:
 		materials_in_pack -= MODIFIER_MATERIAL_COST
 		equipment_research_spent += MODIFIER_RESEARCH_COST
 		owned_modifiers[id] = true
+		_record_expedition_milestone("Modificador: %s" % EQUIPMENT_MODIFIERS[id][1])
 	var slot: String = EQUIPMENT_MODIFIERS[id][0]
 	if equipped_modifiers.get(slot, "") == id:
 		equipped_modifiers.erase(slot)
@@ -2838,7 +3200,16 @@ func _assign_mineral_types(level: int) -> void:
 			candidates.remove_at(chosen)
 
 func _can_detect_species(species: String) -> bool:
-	return species not in ["molsa_ferrica", "escarabat_ferric"] or _modifier_protects("escaner", "ferric")
+	return species.get_slice("~", 0) not in ["molsa_ferrica", "escarabat_ferric"] or _modifier_protects("escaner", "ferric")
+
+func _room_needs_ferric_filter(cave_id: int) -> bool:
+	return _has_undetectable_trace(cave_id, false) or _has_undetectable_trace(cave_id, true)
+
+func _has_undetectable_trace(cave_id: int, fauna: bool) -> bool:
+	var sites := fauna_sites if fauna else flora_sites
+	var analyzed := analyzed_fauna if fauna else analyzed_flora
+	var species := fauna_species_by_room if fauna else flora_species_by_room
+	return sites.has(cave_id) and not analyzed.has(cave_id) and not _can_detect_species(species.get(cave_id, ""))
 
 func _add_supply_offer(grid: GridContainer, supply_id: String, replenish: Button) -> void:
 	var detail := _add_workshop_offer(grid, SUPPLY_UPGRADES[supply_id][0], "", replenish)
@@ -3250,6 +3621,15 @@ func _add_workshop_offer(grid: GridContainer, title: String, description: String
 	contents.add_child(action)
 	return detail
 
+func _is_biome_workshop(cave_id: int) -> bool:
+	return _depth_has_workshop(current_level) and cave_id >= 0 and cave_id == world.get("entry", -1)
+
+func _depth_has_workshop(depth: int) -> bool:
+	return depth > 0 and depth < CAMPAIGN_DEPTH and DEPTH_ZONE_NAMES.has(depth)
+
+func _can_use_workshop() -> bool:
+	return surface_mode or (not moving and not world.is_empty() and _is_biome_workshop(_cave_at_position(unit_position)))
+
 func _open_inventory(workshop: bool) -> void:
 	_update_research_panel()
 	inventory_tabs.current_tab = 1 if workshop else 0
@@ -3336,20 +3716,23 @@ func _update_inventory_screen() -> void:
 	inventory_strip_meters[5].value = charge
 	inventory_strip_meters[STRIP_BIO_SCANNER_SLOT].value = bio_scanner_integrity
 	workshop_materials_balance.text = "Ferro: %d   Quars: %d   Magnetita: %d   ·   Punts d’investigació: %d" % [materials_in_pack, quartz_in_pack, magnetite_in_pack, _research_points()]
-	buy_medkit_button.disabled = not surface_mode or materials_in_pack < MEDKIT_COST
+	var workshop_available := _can_use_workshop()
+	buy_medkit_button.disabled = not workshop_available or materials_in_pack < MEDKIT_COST
 	_update_health_display()
-	repair_folding_ladder_button.disabled = not surface_mode or materials_in_pack < FOLDING_LADDER_REPAIR_COST or ladder_uses_spent == 0
-	if not surface_mode:
-		workshop_materials_balance.text += " · Compra a la base"
-	refill_oxygen_button.disabled = not surface_mode or materials_in_pack < OXYGEN_REFILL_COST or oxygen_seconds >= _oxygen_capacity()
-	repair_suit_button.disabled = not surface_mode or materials_in_pack < SUIT_REPAIR_COST or suit_integrity >= 100.0
-	repair_mining_tool_button.disabled = not surface_mode or materials_in_pack < MINING_REPAIR_COST or mining_tool_integrity >= 100.0
-	buy_helmet_battery_button.disabled = not surface_mode or materials_in_pack < HELMET_BATTERY_COST
+	repair_folding_ladder_button.disabled = not workshop_available or materials_in_pack < FOLDING_LADDER_REPAIR_COST or ladder_uses_spent == 0
+	if workshop_available:
+		workshop_materials_balance.text += " · Taller de superfície" if surface_mode else " · Taller del bioma"
+	else:
+		workshop_materials_balance.text += " · Ves al taller de superfície o a l’entrada d’un bioma"
+	refill_oxygen_button.disabled = not workshop_available or materials_in_pack < OXYGEN_REFILL_COST or oxygen_seconds >= _oxygen_capacity()
+	repair_suit_button.disabled = not workshop_available or materials_in_pack < SUIT_REPAIR_COST or suit_integrity >= 100.0
+	repair_mining_tool_button.disabled = not workshop_available or materials_in_pack < MINING_REPAIR_COST or mining_tool_integrity >= 100.0
+	buy_helmet_battery_button.disabled = not workshop_available or materials_in_pack < HELMET_BATTERY_COST
 	for id in modifier_buttons:
 		var action := modifier_buttons[id]
 		var slot: String = EQUIPMENT_MODIFIERS[id][0]
 		var equipped: bool = equipped_modifiers.get(slot, "") == id
-		action.disabled = not surface_mode or (not owned_modifiers.has(id) and not _can_upgrade_equipment(MODIFIER_MATERIAL_COST, MODIFIER_RESEARCH_COST))
+		action.disabled = not workshop_available or (not owned_modifiers.has(id) and not _can_upgrade_equipment(MODIFIER_MATERIAL_COST, MODIFIER_RESEARCH_COST))
 		var caption := "ACTIU · DESACTIVA" if equipped else ("ACTIVA" if owned_modifiers.has(id) else "COMPRA I ACTIVA · %d FERRO + %d PUNT" % [MODIFIER_MATERIAL_COST, MODIFIER_RESEARCH_COST])
 		action.text = "%s\n%s" % [EQUIPMENT_MODIFIERS[id][1], caption]
 		action.tooltip_text = EQUIPMENT_MODIFIERS[id][2]
@@ -3359,15 +3742,15 @@ func _update_inventory_screen() -> void:
 	var next_boots := mini(equipped_boots + 1, MAX_EQUIPMENT_LEVEL - 1)
 	boots_offer.text = "%s · %s\nVelocitat base: %d u/s" % [_tier_caption(equipped_boots), _boots_model(next_boots), roundi(_boots_speed(next_boots))]
 	_update_upgrade_button(boots_button, equipped_boots)
-	repair_boots_button.disabled = not surface_mode or materials_in_pack < BOOT_REPAIR_COST or boots_integrity >= 100.0
-	buy_repair_kit_button.disabled = not surface_mode or materials_in_pack < REPAIR_KIT_COST or repair_kit_uses_spent <= 0
+	repair_boots_button.disabled = not workshop_available or materials_in_pack < BOOT_REPAIR_COST or boots_integrity >= 100.0
+	buy_repair_kit_button.disabled = not workshop_available or materials_in_pack < REPAIR_KIT_COST or repair_kit_uses_spent <= 0
 	_update_upgrade_button(upgrade_bio_scanner_button, bio_scanner_tier)
 	_update_upgrade_button(craft_suit_button, suit_tier)
 	var next_scanner := mini(bio_scanner_tier + 1, MAX_EQUIPMENT_LEVEL - 1)
 	var next_suit := mini(suit_tier + 1, MAX_EQUIPMENT_LEVEL - 1)
 	scanner_upgrade_offer.text = "%s\nEscaneig en %.1f s · −%.1f d’estat" % [_tier_caption(bio_scanner_tier), _bio_scan_duration(next_scanner), _bio_scan_wear(next_scanner)]
 	suit_upgrade_offer.text = "%s\n%d%% menys de desgast per pressió" % [_tier_caption(suit_tier), next_suit * 4]
-	repair_bio_scanner_button.disabled = not surface_mode or bio_scanner_integrity >= 100.0 or materials_in_pack < BIO_SCANNER_REPAIR_COST
+	repair_bio_scanner_button.disabled = not workshop_available or bio_scanner_integrity >= 100.0 or materials_in_pack < BIO_SCANNER_REPAIR_COST
 	for supply_id in supply_upgrade_buttons:
 		var tier := _supply_tier(supply_id)
 		_update_upgrade_button(supply_upgrade_buttons[supply_id], tier)
@@ -3413,7 +3796,7 @@ func _update_upgrade_button(button: Button, tier: int) -> void:
 		button.text += "\n+ 1 DE %s" % mineral.to_upper()
 	button.tooltip_text = button.text.replace("\n", " ")
 
-func _pay_equipment_upgrade(tier: int) -> bool:
+func _pay_equipment_upgrade(tier: int, equipment_name: String) -> bool:
 	var cost := _equipment_cost(tier)
 	var mineral := _upgrade_mineral(tier)
 	if tier >= MAX_EQUIPMENT_LEVEL - 1 or not _can_upgrade_equipment(cost.x, cost.y) or not _has_upgrade_mineral(mineral):
@@ -3423,10 +3806,11 @@ func _pay_equipment_upgrade(tier: int) -> bool:
 	match mineral:
 		"quars": quartz_in_pack -= 1
 		"magnetita": magnetite_in_pack -= 1
+	_record_expedition_milestone("%s · nivell %d" % [equipment_name, tier + 2])
 	return true
 
 func _can_upgrade_equipment(material_cost: int, research_cost: int) -> bool:
-	return surface_mode and materials_in_pack >= material_cost and _research_points() >= research_cost
+	return _can_use_workshop() and materials_in_pack >= material_cost and _research_points() >= research_cost
 
 func _equipment_upgrade_caption(material_cost: int, research_cost: int) -> String:
 	return "MILLORA · %d FERRO + %d %s" % [material_cost, research_cost, "PUNT" if research_cost == 1 else "PUNTS"]
@@ -3439,7 +3823,7 @@ func _supply_bonus(supply_id: String) -> float:
 
 func _upgrade_supply(supply_id: String) -> void:
 	var tier := _supply_tier(supply_id)
-	if not _pay_equipment_upgrade(tier):
+	if not _pay_equipment_upgrade(tier, SUPPLY_UPGRADES[supply_id][0]):
 		return
 	supply_tiers[supply_id] = tier + 1
 	_update_oxygen_display()
@@ -3453,21 +3837,21 @@ func _bio_scan_wear(tier: int) -> float:
 	return lerpf(8.0, 2.0, float(tier) / (MAX_EQUIPMENT_LEVEL - 1))
 
 func _upgrade_bio_scanner() -> void:
-	if not _pay_equipment_upgrade(bio_scanner_tier):
+	if not _pay_equipment_upgrade(bio_scanner_tier, "Escàner biològic"):
 		return
 	bio_scanner_tier += 1
 	bio_scanner_integrity = 100.0
 	_update_research_panel()
 
 func _repair_bio_scanner() -> void:
-	if not surface_mode or bio_scanner_integrity >= 100.0 or materials_in_pack < BIO_SCANNER_REPAIR_COST:
+	if not _can_use_workshop() or bio_scanner_integrity >= 100.0 or materials_in_pack < BIO_SCANNER_REPAIR_COST:
 		return
 	materials_in_pack -= BIO_SCANNER_REPAIR_COST
 	bio_scanner_integrity = 100.0
 	_update_research_panel()
 
 func _repair_kit_capacity() -> int:
-	return 1 + _supply_tier("repair_kit")
+	return 1 + _supply_tier("repair_kit") + int(starting_rewards_depth >= 10)
 
 func _repair_kit_uses_left() -> int:
 	return _repair_kit_capacity() - repair_kit_uses_spent
@@ -3476,7 +3860,7 @@ func _repair_kit_uses_percent() -> float:
 	return 100.0 * _repair_kit_uses_left() / _repair_kit_capacity()
 
 func _buy_repair_kit() -> void:
-	if not surface_mode or materials_in_pack < REPAIR_KIT_COST or repair_kit_uses_spent <= 0:
+	if not _can_use_workshop() or materials_in_pack < REPAIR_KIT_COST or repair_kit_uses_spent <= 0:
 		return
 	materials_in_pack -= REPAIR_KIT_COST
 	repair_kit_uses_spent -= 1
@@ -3522,7 +3906,7 @@ func _apply_field_repair(target: int) -> void:
 	status_label.text = "REPARACIÓ DE CAMP COMPLETADA"
 
 func _buy_boots() -> void:
-	if not _pay_equipment_upgrade(equipped_boots):
+	if not _pay_equipment_upgrade(equipped_boots, "Botes"):
 		return
 	equipped_boots += 1
 	boots_integrity = 100.0
@@ -3551,7 +3935,7 @@ func _update_boots_display() -> void:
 		inventory_strip_values[9].text = summary
 
 func _repair_boots_at_base() -> void:
-	if not surface_mode or materials_in_pack < BOOT_REPAIR_COST or boots_integrity >= 100.0:
+	if not _can_use_workshop() or materials_in_pack < BOOT_REPAIR_COST or boots_integrity >= 100.0:
 		return
 	materials_in_pack -= BOOT_REPAIR_COST
 	boots_integrity = 100.0
@@ -3559,7 +3943,7 @@ func _repair_boots_at_base() -> void:
 	status_label.text = "BOTES REPARADES"
 
 func _refill_oxygen_at_base() -> void:
-	if not surface_mode or materials_in_pack < OXYGEN_REFILL_COST or oxygen_seconds >= _oxygen_capacity():
+	if not _can_use_workshop() or materials_in_pack < OXYGEN_REFILL_COST or oxygen_seconds >= _oxygen_capacity():
 		return
 	materials_in_pack -= OXYGEN_REFILL_COST
 	oxygen_seconds = _oxygen_capacity()
@@ -3568,7 +3952,7 @@ func _refill_oxygen_at_base() -> void:
 	status_label.text = "DIPÒSIT D’OXIGEN RECARREGAT"
 
 func _repair_suit_at_base() -> void:
-	if not surface_mode or materials_in_pack < SUIT_REPAIR_COST or suit_integrity >= 100.0:
+	if not _can_use_workshop() or materials_in_pack < SUIT_REPAIR_COST or suit_integrity >= 100.0:
 		return
 	materials_in_pack -= SUIT_REPAIR_COST
 	suit_integrity = 100.0
@@ -3576,7 +3960,7 @@ func _repair_suit_at_base() -> void:
 	status_label.text = "VESTIT ESPACIAL REPARAT"
 
 func _buy_helmet_battery() -> void:
-	if not surface_mode or materials_in_pack < HELMET_BATTERY_COST:
+	if not _can_use_workshop() or materials_in_pack < HELMET_BATTERY_COST:
 		return
 	materials_in_pack -= HELMET_BATTERY_COST
 	if flashlight_charge <= 0.0:
@@ -3604,7 +3988,7 @@ func _update_health_display() -> void:
 	medkit_button.queue_redraw()
 
 func _buy_medkit() -> void:
-	if not surface_mode or materials_in_pack < MEDKIT_COST:
+	if not _can_use_workshop() or materials_in_pack < MEDKIT_COST:
 		return
 	materials_in_pack -= MEDKIT_COST
 	medkits += 1
@@ -3617,15 +4001,16 @@ func _use_medkit() -> void:
 	health = minf(100.0, health + 35.0 + _supply_bonus("medkit"))
 	_update_equipment_display()
 	status_label.text = "FARMACIOLA UTILITZADA"
+	_save_active_profile()
 
 func _ladder_capacity() -> int:
-	return 1 + _supply_tier("ladder")
+	return 1 + _supply_tier("ladder") + int(starting_rewards_depth >= 19)
 
 func _ladder_uses_left() -> int:
 	return _ladder_capacity() - ladder_uses_spent
 
 func _repair_folding_ladder() -> void:
-	if not surface_mode or materials_in_pack < FOLDING_LADDER_REPAIR_COST or ladder_uses_spent == 0:
+	if not _can_use_workshop() or materials_in_pack < FOLDING_LADDER_REPAIR_COST or ladder_uses_spent == 0:
 		return
 	materials_in_pack -= FOLDING_LADDER_REPAIR_COST
 	ladder_uses_spent = 0
@@ -3645,14 +4030,14 @@ func _mining_wear(tier: int) -> float:
 	return MINING_WEAR_PER_DEPOSIT[mini(tier, MINING_WEAR_PER_DEPOSIT.size() - 1)] - maxf(0.0, tier - 2) * (3.0 / (MAX_EQUIPMENT_LEVEL - 3))
 
 func _buy_mining_tool() -> void:
-	if not _pay_equipment_upgrade(mining_tool):
+	if not _pay_equipment_upgrade(mining_tool, "Eina de mineria"):
 		return
 	mining_tool += 1
 	mining_tool_integrity = 100.0
 	_update_research_panel()
 
 func _repair_mining_tool_at_base() -> void:
-	if not surface_mode or materials_in_pack < MINING_REPAIR_COST or mining_tool_integrity >= 100.0:
+	if not _can_use_workshop() or materials_in_pack < MINING_REPAIR_COST or mining_tool_integrity >= 100.0:
 		return
 	materials_in_pack -= MINING_REPAIR_COST
 	mining_tool_integrity = 100.0
@@ -3675,7 +4060,7 @@ func _build_depth_selector(parent: Control) -> void:
 				list.add_child(HSeparator.new())
 			var heading := _add_equipment_label(list, DEPTH_ZONE_NAMES[level], 11, Color("abbeff"))
 			heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		var caption := "Superfície · 0" if level == 0 else "Nivell −%d" % level
+		var caption := "Superfície · 0" if level == 0 else "Estrat −%d" % level
 		var row := _button(caption, Vector2.ZERO, Vector2.ZERO, true)
 		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		row.custom_minimum_size.y = 24
@@ -3708,6 +4093,15 @@ func _depth_state(level: int) -> Dictionary:
 		return _level_snapshot()
 	return inactive_levels.get(level, {})
 
+func _show_depth_rewards() -> void:
+	var lines := PackedStringArray(["Millor profunditat: %d" % -deepest_reached,
+		"Els desbloquejos s’acumulen i s’apliquen a la pròxima expedició."])
+	for depth in DEPTH_REWARDS:
+		var state := "Activa" if starting_rewards_depth >= depth else ("Desbloquejada" if deepest_reached >= depth else "Pendent")
+		lines.append("%s −%d · %s · %s" % ["★" if deepest_reached >= depth else "☆", depth, DEPTH_REWARDS[depth], state])
+	rewards_dialog.dialog_text = "\n\n".join(lines)
+	rewards_dialog.popup_centered(Vector2i(480, 0))
+
 func _refresh_depth_selector() -> void:
 	if depth_rows.is_empty() or world.is_empty():
 		return
@@ -3716,18 +4110,22 @@ func _refresh_depth_selector() -> void:
 		var state := _depth_state(level)
 		var discovered: bool = level == 0 or (not state.is_empty() and not state.visited_caves.is_empty())
 		var active := level == current_level
-		var caption := "Superfície · 0" if level == 0 else "Nivell −%d" % level
+		var caption := "Superfície · 0" if level == 0 else "Estrat −%d" % level
+		if DEPTH_REWARDS.has(level):
+			caption += " ★" if deepest_reached >= level else " ☆"
 		if active:
 			caption += " · ETS AQUÍ"
 		elif not discovered:
 			caption += " · PER DESCOBRIR"
+		if discovered and _depth_has_workshop(level):
+			caption += " · Taller"
 		row.text = ("%s  " % ("●" if active else "○")) + caption
 		row.add_theme_color_override("font_color", CYAN if active else (Color("dcecf0") if discovered else MUTED))
 		depth_percentages[level].text = "—"
 		if level == 0:
 			row.tooltip_text = "Base de superfície"
 		elif not discovered:
-			row.tooltip_text = "Nivell encara per descobrir" if level <= OXIDIZED_CAVES_DEPTH else "Nivell encara no disponible"
+			row.tooltip_text = "Estrat encara per descobrir"
 		else:
 			var counts := _depth_discovery_counts(state)
 			depth_percentages[level].text = "%d%%" % floori(_overall_discovery(counts))
@@ -3735,6 +4133,10 @@ func _refresh_depth_selector() -> void:
 			for index in range(DEPTH_CATEGORIES.size()):
 				detail.append("%s · %s" % [DEPTH_CATEGORIES[index], _discovery_percentage(counts[index])])
 			row.tooltip_text = "\n".join(detail)
+		if DEPTH_REWARDS.has(level):
+			row.tooltip_text += "\n%s · %s" % [DEPTH_REWARDS[level], "Desbloquejada" if deepest_reached >= level else "Pendent"]
+		if _depth_has_workshop(level):
+			row.tooltip_text += "\nClica per anar al taller del bioma."
 
 func _depth_discovery_counts(state: Dictionary) -> Array[Vector2i]:
 	var saved_world: Dictionary = state.world
@@ -3764,36 +4166,46 @@ func _overall_discovery(counts: Array[Vector2i]) -> float:
 	return 100.0 * total / maxf(1.0, categories)
 
 func _fit_discovered_map() -> void:
-	if surface_mode or analysis_mode or world.is_empty():
+	if surface_mode or world.is_empty():
 		return
 	center_map_during_move = false
 	var bounds := Rect2(unit_position, Vector2.ZERO)
 	for cave in world.caves:
-		if _should_draw_cave(cave.id) or visited_caves.has(cave.id):
+		if _should_draw_cave(cave.id) or _can_inspect_cave(cave.id) or (analysis_mode and cave.id == selected_cave):
 			for point in cave.contour:
 				bounds = bounds.expand(cave.position + point)
 		if _can_inspect_cave(cave.id):
 			for exit_info in _visible_exits_for_cave(cave.id):
 				bounds = bounds.expand(exit_info.position + exit_info.direction * 12.0)
+				if analysis_mode:
+					var gallery := _corridor_by_id(exit_info.corridor_id)
+					for point in _isometric_exit_stub(exit_info, gallery, cave):
+						bounds = bounds.expand(point - Vector2.ONE * float(gallery.width) * 0.5)
+						bounds = bounds.expand(point + Vector2.ONE * float(gallery.width) * 0.5)
 	for corridor in world.corridors:
 		var half_width := Vector2.ONE * float(corridor.width) * 0.5
-		for span: PackedVector2Array in _map_gallery_spans(corridor):
-			for point in _map_gallery_span_at_mouths(span, corridor):
+		var spans := _map_gallery_spans(corridor)
+		if analysis_mode:
+			spans = [corridor.points] if _gallery_has_lamps(corridor) or corridor.id in [inspection_corridor_id, isometric_passage_id] else walked_gallery_spans.get(corridor.id, [])
+		for span: PackedVector2Array in spans:
+			for point in (span if analysis_mode else _map_gallery_span_at_mouths(span, corridor)):
 				bounds = bounds.expand(point - half_width).expand(point + half_width)
 	var view := _view_rect()
 	var left_panel := depth_diagram.get_parent() as Control
 	var left := maxf(view.position.x, left_panel.get_global_rect().end.x + 12.0)
 	var right := minf(view.end.x, minf(map_legend_panel.position.x, level_panel.position.x) - 12.0)
-	var top := room_progress_label.position.y + 60.0
+	var top := room_progress_label.position.y + 82.0
 	if low_supply_label.visible:
 		top = low_supply_label.get_global_rect().end.y
 	var bottom := navigation_panel.position.y
 	var area := Rect2(left, top, maxf(1.0, right - left), maxf(1.0, bottom - top))
 	var available := (area.size - Vector2(88, 40)).max(Vector2.ONE)
-	var fit := minf(available.x / maxf(bounds.size.x, 1.0), available.y / maxf(bounds.size.y, 1.0))
-	zoom_level = minf(fit, MAP_ENTRY_ZOOM)
+	var projected_height := bounds.size.y * (ISO_VERTICAL_RATIO if analysis_mode else 1.0)
+	var fit := minf(available.x / maxf(bounds.size.x, 1.0), available.y / maxf(projected_height, 1.0))
+	zoom_level = minf(fit, ANALYSIS_MAX_ZOOM if analysis_mode else MAP_ENTRY_ZOOM)
 	var center_offset := area.get_center() - view.get_center()
-	camera_offset = center_offset - (bounds.get_center() - Generator.WORLD_RECT.size * 0.5) * zoom_level
+	var projected_center := _iso_project_relative(bounds.get_center(), world.caves[selected_cave].position) if analysis_mode else bounds.get_center() - Generator.WORLD_RECT.size * 0.5
+	camera_offset = center_offset - projected_center * zoom_level
 	queue_redraw()
 
 func _build_level_progress_strip() -> void:
@@ -3804,7 +4216,7 @@ func _build_level_progress_strip() -> void:
 	cards.columns = 6
 	cards.add_theme_constant_override("h_separation", 8)
 	level_progress_strip.add_child(cards)
-	for title in ["Nivell descobert", "Sales escanejades", "Galeries recorregudes", "Flora analitzada", "Fauna observada", "Vetes descobertes"]:
+	for title in ["Estrat descobert", "Sales escanejades", "Galeries recorregudes", "Flora analitzada", "Fauna observada", "Vetes descobertes"]:
 		var card := _add_equipment_card(cards, Vector2(128, 66))
 		card.alignment = BoxContainer.ALIGNMENT_CENTER
 		_add_equipment_label(card, title, 11, Color("b4ccd2"))
@@ -3825,7 +4237,7 @@ func _layout_panels() -> void:
 	level_progress_strip.position = Vector2((extent.x - progress_extent.x) * 0.5, 62.0)
 	level_title_label.position = Vector2((extent.x - level_title_label.size.x) * 0.5, 22.0)
 	room_progress_label.position = Vector2((extent.x - room_progress_label.size.x) * 0.5, level_progress_strip.position.y + progress_extent.y + 4.0)
-	low_supply_label.position = Vector2((extent.x - low_supply_label.size.x) * 0.5, room_progress_label.position.y + 60.0)
+	low_supply_label.position = Vector2((extent.x - low_supply_label.size.x) * 0.5, room_progress_label.position.y + 82.0)
 	level_panel.scale = Vector2.ONE * SIDE_PANEL_SCALE
 	level_panel.position = Vector2(maxf(0.0, extent.x - level_panel.size.x * SIDE_PANEL_SCALE), 8.0)
 	var bar_scale := minf(1.0, (extent.x - 16.0) / equipment_bar.size.x)
@@ -3939,11 +4351,49 @@ func _on_new_pressed() -> void:
 	_new_world(parsed)
 	_save_active_profile()
 
-func _place_flora_sites() -> void:
+func _pick_biome_species(species: Dictionary, depth: int, rng: RandomNumberGenerator, basic_scanner_only: bool = false) -> String:
+	var biome := depth if depth >= 19 else 1 + floori(float(depth - 1) / 3.0) * 3
+	var native: Array[String] = []
+	for id in species:
+		if basic_scanner_only and id in ["molsa_ferrica", "escarabat_ferric"]:
+			continue
+		if int(species[id].get("biome", 1)) == biome:
+			native.append(id)
+	return native[rng.randi_range(0, native.size() - 1)]
+
+func _sample_room_site(cave: Dictionary, rng: RandomNumberGenerator, clearance: float, reserved: Array[Vector2]) -> Vector2:
+	var contour: PackedVector2Array = cave.contour
+	var bounds := Rect2(contour[0], Vector2.ZERO)
+	for vertex in contour:
+		bounds = bounds.expand(vertex)
+	for attempt in range(64):
+		var offset := Vector2(rng.randf_range(bounds.position.x, bounds.end.x), rng.randf_range(bounds.position.y, bounds.end.y))
+		var point: Vector2 = cave.position + offset
+		if not _point_inside_cave_id(point, cave.id) or _distance_to_cave_boundary(point, cave) < clearance:
+			continue
+		var overlaps := false
+		for occupied in reserved:
+			if point.distance_to(occupied) < clearance + 8.0:
+				overlaps = true
+				break
+		if not overlaps and _segment_is_walkable(cave.position, point, true):
+			return point
+	return Vector2.INF
+
+func _room_site_reservations(cave_id: int) -> Array[Vector2]:
+	var reserved: Array[Vector2] = []
+	if cave_id == world.entry or cave_id == descent_access:
+		reserved.append(_level_access_position(cave_id))
+	for sites in [flora_sites, fauna_sites, material_sites]:
+		if sites.has(cave_id):
+			reserved.append(sites[cave_id])
+	return reserved
+
+func _place_flora_sites(depth: int = 1) -> void:
 	flora_sites.clear()
 	flora_species_by_room.clear()
 	var rng := RandomNumberGenerator.new()
-	rng.seed = hash([seed_value, "flora_p0c"])
+	rng.seed = hash([seed_value, "flora_mix_v2"])
 	var first_neighbor := -1
 	for corridor in world.corridors:
 		if (corridor.a == world.entry or corridor.b == world.entry) and _gallery_has_continuous_signal(corridor, -1, true):
@@ -3952,20 +4402,17 @@ func _place_flora_sites() -> void:
 	for cave in world.caves:
 		if cave.id == world.entry or (cave.id != first_neighbor and rng.randf() >= 0.25):
 			continue
-		var angle := rng.randf_range(0.0, TAU)
-		for attempt in range(12):
-			var point: Vector2 = cave.position + Vector2.from_angle(angle + TAU * attempt / 12.0) * minf(float(cave.radius) * 0.35, 28.0)
-			if _point_inside_cave_id(point, cave.id) and _segment_is_walkable(point, point, true):
-				flora_sites[cave.id] = point
-				break
+		var point := _sample_room_site(cave, rng, 8.0, _room_site_reservations(cave.id))
+		if point.is_finite():
+			flora_sites[cave.id] = point
 		if cave.id == first_neighbor and not flora_sites.has(cave.id):
 			flora_sites[cave.id] = cave.position
 	# Separate the species draw from placement so changes to one do not reroll the other.
 	var species_rng := RandomNumberGenerator.new()
-	var species_ids := FLORA_SPECIES.keys()
 	for cave_id in flora_sites:
-		species_rng.seed = hash([seed_value, "flora_species_v1", cave_id])
-		flora_species_by_room[cave_id] = species_ids[species_rng.randi_range(0, species_ids.size() - 2 if cave_id == first_neighbor else species_ids.size() - 1)]
+		species_rng.seed = hash([seed_value, "flora_species_mix_v2", cave_id])
+		var family := _pick_biome_species(FLORA_SPECIES, depth, species_rng, cave_id == first_neighbor)
+		flora_species_by_room[cave_id] = OrganismTraits.roll(family, OrganismTraits.PLANT, species_rng)
 
 func _flora_is_visible() -> bool:
 	return analysis_mode and _flora_is_visible_in_room(selected_cave)
@@ -4010,14 +4457,14 @@ func _can_use_tools_at(point: Vector2, cave_id: int) -> bool:
 	var cell_size: float = world.cell_size
 	return _has_line_of_sight(Vector2i((unit_position / cell_size).floor()), Vector2i((point / cell_size).floor()))
 
-func _place_fauna_sites() -> void:
+func _place_fauna_sites(depth: int = 1) -> void:
 	fauna_sites.clear()
 	fauna_species_by_room.clear()
 	fauna_patrol_ends.clear()
 	fauna_time = 0.0
 	var rng := RandomNumberGenerator.new()
-	rng.seed = hash([seed_value, "fauna_v1"])
-	var population := rng.randi_range(3, 5)
+	rng.seed = hash([seed_value, "fauna_mix_v2"])
+	var population := rng.randi_range(2, maxi(3, ceili(world.caves.size() * 0.4)))
 	var candidates: Array = world.caves.duplicate()
 	for index in range(candidates.size() - 1, 0, -1):
 		var other := rng.randi_range(0, index)
@@ -4025,35 +4472,65 @@ func _place_fauna_sites() -> void:
 		candidates[index] = candidates[other]
 		candidates[other] = swap
 	for cave in candidates:
-		if cave.id == world.entry or flora_sites.has(cave.id):
+		if cave.id == world.entry:
 			continue
-		var angle := rng.randf_range(0.0, TAU)
-		var spawn: Vector2 = cave.position + Vector2.from_angle(angle) * minf(float(cave.radius) * 0.2, 14.0)
-		if not _point_inside_cave_id(spawn, cave.id) or not _segment_is_walkable(spawn, spawn, true):
-			spawn = cave.position
+		var reserved := _room_site_reservations(cave.id)
+		var spawn := _sample_room_site(cave, rng, 8.0, reserved)
+		if not spawn.is_finite():
+			continue
 		fauna_sites[cave.id] = spawn
 		for attempt in range(12):
-			var target: Vector2 = cave.position + Vector2.from_angle(angle + TAU * attempt / 12.0) * minf(float(cave.radius) * 0.45, 34.0)
-			if not spawn.is_equal_approx(target) and not _path_prefix_inside_cave([target], spawn, cave.id).is_empty() and _segment_is_walkable(spawn, target, true):
+			var target := _sample_room_site(cave, rng, 8.0, reserved)
+			if target.is_finite() and spawn.distance_to(target) >= 14.0 and not _path_prefix_inside_cave([target], spawn, cave.id).is_empty() and _segment_is_walkable(spawn, target, true):
 				fauna_patrol_ends[cave.id] = target
 				break
 		if fauna_sites.size() == population:
 			break
-	var species := FAUNA_SPECIES.keys()
 	var species_rng := RandomNumberGenerator.new()
 	for cave_id in fauna_sites:
-		species_rng.seed = hash([seed_value, "fauna_species_oxidized_v1", cave_id])
-		fauna_species_by_room[cave_id] = species[species_rng.randi_range(0, species.size() - 1)]
+		species_rng.seed = hash([seed_value, "fauna_species_mix_v2", cave_id])
+		var family := _pick_biome_species(FAUNA_SPECIES, depth, species_rng)
+		var id := _roll_fauna_variant(family, species_rng)
+		for retry in range(12):
+			if not fauna_species_by_room.values().has(id):
+				break
+			id = _roll_fauna_variant(family, species_rng)
+		fauna_species_by_room[cave_id] = id
+
+func _roll_fauna_variant(family: String, rng: RandomNumberGenerator) -> String:
+	return OrganismTraits.roll(family, OrganismTraits.ANIMAL, rng)
+
+func _fauna_variant(species_id: String) -> Dictionary:
+	var recipe := OrganismTraits.decode(species_id, OrganismTraits.ANIMAL)
+	if not recipe.is_empty():
+		recipe.legs += 1
+		recipe.fur = recipe.fur == 1
+		return recipe
+	var fields := species_id.split("~")
+	if fields.size() != 7 or fields[1] != "1":
+		return {}
+	return {"legs": clampi(fields[2].to_int(), 1, 4), "color": clampi(fields[3].to_int(), 0, FAUNA_VARIANT_COLORS.size() - 1),
+		"fur": fields[4] == "1", "size": clampi(fields[5].to_int(), 0, FAUNA_VARIANT_SIZES.size() - 1),
+		"pattern": clampi(fields[6].to_int(), 0, FAUNA_VARIANT_PATTERNS.size() - 1)}
 
 func _fauna_position(cave_id: int) -> Vector2:
 	var start: Vector2 = fauna_sites[cave_id]
 	if not fauna_patrol_ends.has(cave_id):
 		return start
 	var finish: Vector2 = fauna_patrol_ends[cave_id]
-	var speed := 8.0 if fauna_species_by_room.get(cave_id) == "isopode" else 13.0
+	var id: String = fauna_species_by_room.get(cave_id, "escarabat")
+	var speed := 8.0 if _fauna_is_segmented(id) else 13.0
+	var recipe := _fauna_variant(id)
+	var movement := int(recipe.get("movement", -1))
+	if movement == 0:
+		speed *= 0.7
+	elif movement == 1:
+		speed *= 1.35
 	var travel_time := start.distance_to(finish) / speed
 	var pause := 1.2
 	var phase := fposmod(fauna_time + cave_id * 0.41, (travel_time + pause) * 2.0)
+	if movement == 2:
+		phase = (phase + sin(phase * 7.0) * 0.09)
 	if phase >= travel_time + pause:
 		return finish.lerp(start, clampf((phase - travel_time - pause) / travel_time, 0.0, 1.0))
 	return start.lerp(finish, clampf(phase / travel_time, 0.0, 1.0))
@@ -4136,9 +4613,58 @@ func _collect_flora_sample() -> void:
 	status_label.text = "MOSTRA DE FLORA RECOLLIDA · +1 PUNT"
 	_update_flora_button()
 	_layout_room_controls()
+	_save_active_profile()
 
 func _bio_scan_target(cave_id: int, fauna: bool) -> Vector2:
 	return _fauna_position(cave_id) if fauna else flora_sites[cave_id]
+
+func _build_discovery_dialog() -> void:
+	discovery_dialog = AcceptDialog.new()
+	discovery_dialog.ok_button_text = "CONTINUA"
+	discovery_dialog.exclusive = true
+	add_child(discovery_dialog)
+	discovery_portrait = Control.new()
+	discovery_portrait.custom_minimum_size = Vector2(460, 300)
+	discovery_dialog.add_child(discovery_portrait)
+	discovery_portrait.draw.connect(func() -> void:
+		var center := discovery_portrait.size * 0.5
+		discovery_portrait.draw_rect(Rect2(Vector2.ZERO, discovery_portrait.size), BG)
+		if discovery_photo.texture != null:
+			return
+		if discovery_is_fauna:
+			_draw_fauna_map_badge(discovery_portrait, center, discovery_species, 10.0, false)
+		else:
+			_draw_flora_symbol(discovery_portrait, center + Vector2(0, 65), 11.0, discovery_species))
+	discovery_photo = TextureRect.new()
+	discovery_photo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	discovery_photo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	discovery_photo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	discovery_portrait.add_child(discovery_photo)
+	discovery_photo.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+func _show_new_discovery(species_id: String, fauna: bool, point: Vector2) -> void:
+	discovery_species = species_id
+	discovery_is_fauna = fauna
+	var species := FAUNA_SPECIES if fauna else FLORA_SPECIES
+	var family: Dictionary = species.get(species_id.get_slice("~", 0), {})
+	var family_name: String = family.get("name", species_id)
+	var traits := OrganismTraits.ANIMAL if fauna else OrganismTraits.PLANT
+	var display_name := family_name if OrganismTraits.decode(species_id, traits).is_empty() else OrganismTraits.display_name(species_id, family_name, int(family.get("biome", 1)))
+	discovery_dialog.title = ("Fauna nova" if fauna else "Flora nova") + " · " + display_name
+	discovery_photo.texture = null
+	var viewport := get_viewport()
+	var visible_rect := viewport.get_visible_rect()
+	var center := _world_to_screen(point)
+	var frame := Rect2(center - Vector2(40, 30), Vector2(80, 60))
+	if DisplayServer.get_name() != "headless" and visible_rect.encloses(frame) and not _over_ui(center):
+		var image := viewport.get_texture().get_image()
+		if image != null and not image.is_empty():
+			var pixel_scale := Vector2(image.get_size()) / visible_rect.size
+			var crop := Rect2i((frame.position - visible_rect.position) * pixel_scale, frame.size * pixel_scale)
+			if crop.size.x > 0 and crop.size.y > 0:
+				discovery_photo.texture = ImageTexture.create_from_image(image.get_region(crop))
+	discovery_portrait.queue_redraw()
+	discovery_dialog.popup_centered(Vector2i(540, 0))
 
 func _update_bio_scan(delta: float) -> void:
 	if bio_scan_room < 0:
@@ -4166,12 +4692,21 @@ func _update_bio_scan(delta: float) -> void:
 			analyzed_fauna[cave_id] = true
 		else:
 			analyzed_flora[cave_id] = true
+		var species_by_room := fauna_species_by_room if bio_scan_fauna else flora_species_by_room
+		var species_id: String = species_by_room[cave_id]
+		var first_discovery := not biological_register.has(species_id)
+		var subject := _bio_scan_target(cave_id, bio_scan_fauna)
+		var is_fauna := bio_scan_fauna
+		biological_register[species_id] = true
 		_cancel_bio_scan()
 		_update_inventory_screen()
 		_update_level_progress()
 		_update_flora_button()
 		_layout_room_controls()
 		status_label.text = "ESCANEIG 100% · FOTO DISPONIBLE" if bio_scan_fauna else "ESCANEIG 100% · MOSTRA I FOTO DISPONIBLES"
+		_save_active_profile()
+		if first_discovery:
+			_show_new_discovery(species_id, is_fauna, subject)
 	elif previous_integrity != ceili(bio_scanner_integrity):
 		_update_inventory_screen()
 	queue_redraw()
@@ -4235,10 +4770,15 @@ func _photograph_subject() -> void:
 	var crop := Rect2i((frame.position - visible_rect.position) * pixel_scale, frame.size * pixel_scale)
 	if crop.size.x < 1 or crop.size.y < 1:
 		return
-	field_photos[species_id] = ImageTexture.create_from_image(image.get_region(crop))
+	var photo := image.get_region(crop)
+	field_photos[species_id] = ImageTexture.create_from_image(photo)
+	saved_photo_bytes[species_id] = photo.save_png_to_buffer()
+	biological_register[species_id] = true
+	biological_photos[species_id] = saved_photo_bytes[species_id]
 	_update_inventory_screen()
 	status_label.text = "FOTO DESADA AL CATÀLEG"
 	_update_flora_button()
+	_save_active_profile()
 
 func _catalog_rooms(species_id: String, fauna: bool) -> PackedStringArray:
 	var rooms := PackedStringArray()
@@ -4254,21 +4794,52 @@ func _catalog_rooms(species_id: String, fauna: bool) -> PackedStringArray:
 		ids.sort()
 		for id in ids:
 			if species_by_room.get(id) == species_id:
-				rooms.append("N%d · sala %02d" % [-int(level), int(id) + 1])
+				rooms.append("Estrat %d · sala %02d" % [-int(level), int(id) + 1])
 	return rooms
 
+func _remember_current_biology() -> void:
+	var levels := inactive_levels.values()
+	levels.append(_level_snapshot())
+	for state in levels:
+		for id in state.analyzed_flora:
+			biological_register[state.flora_species_by_room[id]] = true
+		for id in state.analyzed_fauna:
+			biological_register[state.fauna_species_by_room[id]] = true
+	for species in saved_photo_bytes:
+		biological_register[species] = true
+		if not biological_photos.has(species):
+			biological_photos[species] = saved_photo_bytes[species]
+
 func _open_flora_catalog() -> void:
+	_remember_current_biology()
 	for entry in catalog_grid.get_children():
 		catalog_grid.remove_child(entry)
 		entry.queue_free()
-	for species_id in FLORA_SPECIES:
-		var rooms := _catalog_rooms(species_id, false)
-		if not rooms.is_empty():
-			_add_catalog_card(species_id, FLORA_SPECIES[species_id], rooms, false)
-	for species_id in FAUNA_SPECIES:
-		var rooms := _catalog_rooms(species_id, true)
-		if not rooms.is_empty():
-			_add_catalog_card(species_id, FAUNA_SPECIES[species_id], rooms, true)
+	var registered := biological_register.keys()
+	registered.sort()
+	for species_id: String in registered:
+		var family := species_id.get_slice("~", 0)
+		if FLORA_SPECIES.has(family):
+			var flora_entry: Dictionary = FLORA_SPECIES[family]
+			var plant := OrganismTraits.decode(species_id, OrganismTraits.PLANT)
+			if not plant.is_empty():
+				flora_entry = {"name": OrganismTraits.display_name(species_id, flora_entry.name, int(flora_entry.get("biome", 1))),
+					"description": OrganismTraits.describe(plant, OrganismTraits.PLANT)}
+			_add_catalog_card(species_id, flora_entry, _catalog_rooms(species_id, false), false)
+			continue
+		if not FAUNA_SPECIES.has(family):
+			continue
+		var entry: Dictionary = FAUNA_SPECIES[family]
+		var variant := _fauna_variant(species_id)
+		var animal := OrganismTraits.decode(species_id, OrganismTraits.ANIMAL)
+		if not animal.is_empty():
+			entry = {"name": OrganismTraits.display_name(species_id, entry.name, int(entry.get("biome", 1))),
+				"description": OrganismTraits.describe(animal, OrganismTraits.ANIMAL)}
+		elif not variant.is_empty():
+			entry = {"name": "%s · %s" % [entry.name, FAUNA_VARIANT_COLOR_NAMES[variant.color]],
+				"description": "%d %s · %s · %s · patró: %s" % [variant.legs, "pota" if variant.legs == 1 else "potes",
+					"amb pèl" if variant.fur else "sense pèl", FAUNA_VARIANT_SIZES[variant.size], FAUNA_VARIANT_PATTERNS[variant.pattern]]}
+		_add_catalog_card(species_id, entry, _catalog_rooms(species_id, true), true)
 	if catalog_grid.get_child_count() == 0:
 		var empty := _add_equipment_card(catalog_grid, Vector2(226, 80))
 		_add_equipment_label(empty, "Cap espècie registrada", 14, MUTED)
@@ -4280,6 +4851,10 @@ func _add_catalog_card(species_id: String, species: Dictionary, rooms: PackedStr
 	var card := _add_equipment_card(catalog_grid, Vector2(226, 170))
 	_add_equipment_label(card, species.name, 15, CYAN)
 	var photo: Texture2D = field_photos.get(species_id)
+	if photo == null and biological_photos.has(species_id):
+		var picture := Image.new()
+		if picture.load_png_from_buffer(biological_photos[species_id]) == OK:
+			photo = ImageTexture.create_from_image(picture)
 	if photo != null:
 		var preview := TextureRect.new()
 		preview.texture = photo
@@ -4300,7 +4875,7 @@ func _add_catalog_card(species_id: String, species: Dictionary, rooms: PackedStr
 	_add_equipment_label(card, "Fauna observada" if fauna else "Flora analitzada", 11, CYAN)
 	var detail := _add_equipment_label(card, species.description, 12, Color("b4ccd2"))
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	var locations := _add_equipment_label(card, ", ".join(rooms), 11, MUTED)
+	var locations := _add_equipment_label(card, "Expedicions anteriors" if rooms.is_empty() else ", ".join(rooms), 11, MUTED)
 	locations.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 func _research_points() -> int:
@@ -4331,8 +4906,8 @@ func _earned_research_record_points() -> int:
 	return species_seen.size() + field_photos.size()
 
 func _update_research_panel() -> void:
-	craft_beacon_button.disabled = not surface_mode or materials_in_pack < BEACON_CRAFT_COST
-	craft_oxygen_button.disabled = not surface_mode or materials_in_pack < OXYGEN_CRAFT_COST
+	craft_beacon_button.disabled = not _can_use_workshop() or materials_in_pack < BEACON_CRAFT_COST
+	craft_oxygen_button.disabled = not _can_use_workshop() or materials_in_pack < OXYGEN_CRAFT_COST
 	craft_beacon_button.text = "REPOSA · %d DE FERRO" % BEACON_CRAFT_COST
 	craft_oxygen_button.text = "COMPRA · %d DE FERRO" % OXYGEN_CRAFT_COST
 	_update_equipment_display()
@@ -4356,7 +4931,7 @@ func _layout_room_controls() -> void:
 		return
 	navigation_panel.visible = not surface_mode
 	inspect_room_button.visible = not analysis_mode
-	fit_map_button.visible = not analysis_mode and not surface_mode
+	fit_map_button.visible = not surface_mode
 	center_explorer_button.visible = analysis_mode
 	if not navigation_panel.visible:
 		return
@@ -4381,12 +4956,9 @@ func _place_material_sites(include_ladder_reserve: bool = false) -> void:
 	for cave in world.caves:
 		if cave.id == world.entry:
 			continue
-		var angle := rng.randf_range(0.0, TAU)
-		for attempt in range(12):
-			var point: Vector2 = cave.position + Vector2.from_angle(angle + TAU * attempt / 12.0) * minf(35.0, float(cave.radius) * 0.42)
-			if _point_inside_cave_id(point, cave.id) and _segment_is_walkable(point, point, true):
-				material_sites[cave.id] = point
-				break
+		var point := _sample_room_site(cave, rng, 12.0, _room_site_reservations(cave.id))
+		if point.is_finite():
+			material_sites[cave.id] = point
 	if not include_ladder_reserve:
 		return
 	var nearby_deposits := 0
@@ -4485,11 +5057,12 @@ func _update_mining(delta: float) -> void:
 		"magnetita": magnetite_in_pack += yield_amount
 		_: materials_in_pack += yield_amount
 	_update_equipment_display()
+	_save_active_profile()
 	queue_redraw()
 
 func _craft_equipment(beacon: bool) -> void:
 	var cost := BEACON_CRAFT_COST if beacon else OXYGEN_CRAFT_COST
-	if not surface_mode or materials_in_pack < cost:
+	if not _can_use_workshop() or materials_in_pack < cost:
 		return
 	materials_in_pack -= cost
 	if beacon:
@@ -4501,7 +5074,7 @@ func _craft_equipment(beacon: bool) -> void:
 	status_label.text = "BALISA FABRICADA" if beacon else "RESERVA D’OXIGEN FABRICADA"
 
 func _craft_reinforced_suit() -> void:
-	if not _pay_equipment_upgrade(suit_tier):
+	if not _pay_equipment_upgrade(suit_tier, "Vestit espacial"):
 		return
 	suit_tier += 1
 	suit_integrity = 100.0
@@ -4522,12 +5095,15 @@ func _inventory_suit_text() -> String:
 func _toggle_flashlight() -> void:
 	if surface_mode:
 		return
+	var replaced_battery := flashlight_charge <= 0.0
 	if flashlight_charge <= 0.0:
 		if flashlight_spares <= 0:
 			return
 		flashlight_spares -= 1
 		flashlight_charge = _helmet_battery_duration()
 	_set_helmet_light(not flashlight_on)
+	if replaced_battery:
+		_save_active_profile()
 
 func _set_helmet_light(enabled: bool) -> void:
 	if flashlight_on == enabled:
@@ -4621,6 +5197,7 @@ func _replace_low_helmet_battery() -> void:
 		flashlight_spares -= 1
 		flashlight_charge = _helmet_battery_duration()
 		_update_equipment_display()
+		_save_active_profile()
 	status_label.text = "BATERIA DEL CASC SUBSTITUÏDA"
 
 func _update_flashlight_charge(delta: float) -> void:
@@ -4643,6 +5220,7 @@ func _use_oxygen_cartridge() -> void:
 	_update_oxygen_display()
 	_update_equipment_display()
 	status_label.text = "RESERVA D’OXIGEN UTILITZADA"
+	_save_active_profile()
 
 func _beacon_range() -> float:
 	return BEACON_RANGE + _supply_bonus("beacon")
@@ -4724,7 +5302,7 @@ func _beacons_remaining() -> int:
 	var installed := deployed_beacons.size()
 	for state in inactive_levels.values():
 		installed += state.deployed_beacons.size()
-	return BEACON_STOCK + crafted_beacons - installed
+	return BEACON_STOCK + crafted_beacons - installed + int(starting_rewards_depth >= 4)
 
 func _can_recover_beacon() -> bool:
 	var cave_id := _beacon_action_room()
@@ -4782,6 +5360,7 @@ func _deploy_beacon() -> void:
 		_update_beacon_status()
 		_update_inventory_screen()
 		status_label.text = "BALISA RECUPERADA"
+		_save_active_profile()
 		queue_redraw()
 		return
 	if not _can_deploy_beacon():
@@ -4790,32 +5369,150 @@ func _deploy_beacon() -> void:
 	_update_beacon_status()
 	_update_inventory_screen()
 	status_label.text = "BALISA INSTAL·LADA"
+	_save_active_profile()
 	queue_redraw()
 
 func _draw_flora_symbol(canvas: CanvasItem, base: Vector2, scale: float, species_id: String = "falguera") -> void:
-	var is_coral := species_id == "coral"
+	var recipe := OrganismTraits.decode(species_id, OrganismTraits.PLANT)
+	if not recipe.is_empty():
+		_draw_plant_variant(canvas, base, scale, recipe)
+		return
+	var species: Dictionary = FLORA_SPECIES.get(species_id, {})
+	var is_coral: bool = species_id == "coral" or species.get("form") == "coral"
 	var glow := Color("dea6ff") if is_coral else Color("a1f8b0")
 	var stem := Color("9362c9") if is_coral else Color("4ec584")
 	var tips := [Vector2(-10, -7), Vector2(-6, -12), Vector2(5, -12), Vector2(10, -7)] if is_coral else [Vector2(-7, -9), Vector2(0, -15), Vector2(7, -11)]
-	if species_id == "molsa_ferrica":
+	if species_id == "molsa_ferrica" or species.get("form") == "molsa":
 		glow = Color("ffd09a")
 		stem = Color("bd6947")
 		tips = [Vector2(-9, -4), Vector2(-4, -7), Vector2(2, -5), Vector2(8, -7)]
+	if species.has("color"):
+		glow = Color(species.color)
+		stem = glow.darkened(0.28)
 	for tip in tips:
 		var end: Vector2 = base + tip * scale
 		canvas.draw_line(base, end, stem, 1.7, true)
 		canvas.draw_circle(end, 4.0 * scale, Color(glow, 0.2), true, -1.0, true)
 		canvas.draw_circle(end, 2.1 * scale, glow, true, -1.0, true)
 
+func _draw_plant_variant(canvas: CanvasItem, base: Vector2, scale: float, recipe: Dictionary) -> void:
+	var tint := Color(OrganismTraits.PLANT_COLORS[recipe.color])
+	var height := 9.0 + 4.0 * int(recipe.size)
+	var count := int(recipe.stems) + 1
+	for index in range(count):
+		var spread := 0.0 if count == 1 else float(index) / float(count - 1) * 2.0 - 1.0
+		var tip := Vector2(spread * 9.0, -height * (1.0 - absf(spread) * 0.32))
+		match int(recipe.form):
+			1:
+				tip = Vector2(spread * 12.0, -height * 0.6 - absf(spread) * 3.0)
+			2:
+				tip.x *= 0.68
+				tip.y *= 1.15
+			3:
+				tip = Vector2(spread * 11.0, -height * 0.42 - (index % 2) * 2.0)
+		var end := base + tip * scale
+		var leaf := base.lerp(end, 0.65)
+		canvas.draw_line(base, end, tint.darkened(0.35), 1.5 * scale, true)
+		match int(recipe.leaf):
+			0:
+				canvas.draw_circle(leaf, 2.0 * scale, tint.darkened(0.18), true, -1.0, true)
+			1:
+				canvas.draw_colored_polygon(PackedVector2Array([leaf, leaf + Vector2(-4, -3) * scale,
+					leaf + Vector2(2, -2) * scale]), tint)
+			2:
+				canvas.draw_line(leaf - Vector2(3, 0) * scale, leaf + Vector2(2, -2) * scale, tint, 2.4 * scale, true)
+		if recipe.texture == 1:
+			canvas.draw_line(leaf, end, tint.lightened(0.32), 0.75 * scale, true)
+		elif recipe.texture == 2:
+			canvas.draw_circle(leaf, 0.75 * scale, tint.lightened(0.4))
+		if recipe.glow > 0:
+			canvas.draw_circle(end, (3.0 + recipe.glow * 1.6) * scale, Color(tint, 0.13 * recipe.glow), true, -1.0, true)
+		match int(recipe.tip):
+			0:
+				canvas.draw_circle(end, 1.8 * scale, tint, true, -1.0, true)
+			1:
+				for petal in range(4):
+					canvas.draw_circle(end + Vector2.from_angle(TAU * petal / 4.0) * 1.7 * scale, 1.15 * scale, tint.lightened(0.25))
+				canvas.draw_circle(end, scale, tint.darkened(0.25))
+			2:
+				for spore in [Vector2(-2, -1), Vector2(0, -3), Vector2(2, 0)]:
+					canvas.draw_circle(end + spore * scale, 0.8 * scale, tint.lightened(0.34))
+
+func _fauna_is_segmented(species_id: String) -> bool:
+	var family := species_id.get_slice("~", 0)
+	return family == "isopode" or FAUNA_SPECIES.get(family, {}).get("segmented", false)
+
+func _fauna_color(species_id: String) -> Color:
+	var fallback := "7f9cbe" if species_id == "isopode" else ("e56d58" if species_id == "escarabat_ferric" else "ffac62")
+	return Color(FAUNA_SPECIES.get(species_id, {}).get("color", fallback))
+
 func _draw_fauna_map_badge(canvas: CanvasItem, center: Vector2, species_id: String = "escarabat", icon_scale: float = 1.0, show_ring: bool = true) -> void:
 	if show_ring:
 		canvas.draw_circle(center, 9.0 * icon_scale, PANEL, true, -1.0, true)
 		canvas.draw_circle(center, 9.0 * icon_scale, Color("cba9ff"), false, 1.4, true)
-	if species_id == "isopode":
+	var variant := _fauna_variant(species_id)
+	if not variant.is_empty():
+		_draw_fauna_variant(canvas, center, species_id, variant, icon_scale * 0.85)
+		return
+	var color := _fauna_color(species_id)
+	if _fauna_is_segmented(species_id):
 		for index in range(-1, 2):
-			canvas.draw_circle(center + Vector2(0, index * 3) * icon_scale, 3.2 * icon_scale, Color("a6c8ef") if index % 2 == 0 else Color("7199c0"), true, -1.0, true)
+			canvas.draw_circle(center + Vector2(0, index * 3) * icon_scale, 3.2 * icon_scale, color.lightened(0.24) if index % 2 == 0 else color, true, -1.0, true)
 	else:
-		_draw_fauna_symbol(canvas, center, 0.65 * icon_scale, Color("e56d58") if species_id == "escarabat_ferric" else ORANGE)
+		_draw_fauna_symbol(canvas, center, 0.65 * icon_scale, color)
+
+func _draw_fauna_variant(canvas: CanvasItem, center: Vector2, species_id: String, variant: Dictionary, icon_scale: float) -> void:
+	var scale := icon_scale * (0.78 + 0.11 * int(variant.size))
+	var tint := Color(FAUNA_VARIANT_COLORS[variant.color])
+	var segmented := _fauna_is_segmented(species_id)
+	var length := 7.0 if segmented else 5.0
+	var tail := int(variant.get("tail", 0))
+	if tail > 0:
+		var tail_base := center + Vector2(0, length - 1.0) * scale
+		var tail_tip := tail_base + Vector2(0, 4) * scale
+		canvas.draw_line(tail_base, tail_tip, tint.darkened(0.25), 1.4 * scale, true)
+		if tail == 2:
+			for side in [-1.0, 1.0]:
+				canvas.draw_line(tail_tip, tail_tip + Vector2(side * 2.5, 2.2) * scale, tint, scale, true)
+	var antennae := int(variant.get("antennae", 0))
+	if antennae > 0:
+		for side in [-1.0, 1.0]:
+			canvas.draw_line(center + Vector2(side * 1.5, -length + 1) * scale,
+				center + Vector2(side * (2 + antennae), -length - antennae * 2.0) * scale, tint.lightened(0.25), scale, true)
+	for leg in range(variant.legs):
+		var side := -1.0 if leg % 2 == 0 else 1.0
+		var y := -3.0 if leg < 2 else 3.0
+		var joint := center + Vector2(side * 3.0, y) * scale
+		var foot := center + Vector2(side * 8.0, y + 2.0) * scale
+		canvas.draw_line(joint, foot, tint.darkened(0.22), 1.2 * scale, true)
+	if variant.fur:
+		for tuft in range(12):
+			var outward := Vector2.from_angle(TAU * float(tuft) / 12.0)
+			var edge := center + outward * Vector2(4.0, length) * scale
+			canvas.draw_line(edge, edge + outward * 2.2 * scale, tint.lightened(0.3), 1.1 * scale, true)
+	var outline := PackedVector2Array()
+	for vertex in range(16):
+		var direction := Vector2.from_angle(TAU * float(vertex) / 16.0)
+		outline.append(center + direction * Vector2(4.5, length) * scale)
+	canvas.draw_colored_polygon(outline, tint)
+	if segmented or variant.get("armor") == 1:
+		for y in [-3.0, 0.0, 3.0]:
+			canvas.draw_line(center + Vector2(-3.2, y) * scale, center + Vector2(3.2, y) * scale, tint.darkened(0.33), scale, true)
+	if variant.get("armor") == 2:
+		for y in [-3.0, 0.0, 3.0]:
+			for side in [-1.0, 1.0]:
+				var spike := center + Vector2(side * 3.0, y) * scale
+				canvas.draw_colored_polygon(PackedVector2Array([spike, spike + Vector2(side * 3, -1) * scale,
+					spike + Vector2(0, 2) * scale]), tint.lightened(0.38))
+	var marking := tint.lightened(0.46)
+	match int(variant.pattern):
+		1, 2:
+			canvas.draw_line(center + Vector2(0, -3.5) * scale, center + Vector2(0, 3.5) * scale, marking, scale, true)
+			if variant.pattern == 2:
+				canvas.draw_line(center + Vector2(2, -3.0) * scale, center + Vector2(2, 3.0) * scale, marking, scale, true)
+		3:
+			for spot in [Vector2(-2, -2), Vector2(2, 1), Vector2(-1, 3)]:
+				canvas.draw_circle(center + spot * scale, 0.9 * scale, marking)
 
 func _draw_fauna_symbol(canvas: CanvasItem, center: Vector2, scale: float, shell_color: Color) -> void:
 	for row in [-5.0, 0.0, 5.0]:
@@ -4837,6 +5534,20 @@ func _pick_descent_access() -> int:
 			result = cave_id
 			greatest_distance = distance
 	return result
+
+func _level_access_position(cave_id: int) -> Vector2:
+	if cave_id == descent_access:
+		return world.get("descent_position", world.caves[cave_id].position)
+	return world.caves[cave_id].position
+
+func _place_descent_position() -> void:
+	if descent_access < 0:
+		return
+	var cave: Dictionary = world.caves[descent_access]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([seed_value, "descent_position_v1", descent_access])
+	var point := _sample_room_site(cave, rng, 18.0, [cave.position])
+	world["descent_position"] = point if point.is_finite() else cave.position
 
 func _level_snapshot() -> Dictionary:
 	var state := {}
@@ -4862,24 +5573,30 @@ func _change_underground_level(destination: int, arrival: int) -> void:
 		rockfall_hit = false
 		var original_seed := seed_value
 		seed_value = hash([original_seed, "subterra_level_v1", destination]) & 0x7fffffff
-		world = Generator.generate(seed_value)
+		world = Generator.generate(seed_value, destination >= 19, Generator.biome_at_depth(destination))
 		for field in LEVEL_STATE_FIELDS:
 			if get(field) is Dictionary and field != "world":
 				set(field, {})
 		revealed_mask = PackedByteArray()
 		revealed_mask.resize(world.terrain_mask.size())
-		_place_flora_sites()
-		_place_fauna_sites()
+		descent_access = int(world.objective) if destination == 19 else (_pick_descent_access() if destination < CAMPAIGN_DEPTH else -1)
+		_place_descent_position()
+		_place_flora_sites(destination)
+		_place_fauna_sites(destination)
 		_place_material_sites()
-		descent_access = _pick_descent_access() if destination < OXIDIZED_CAVES_DEPTH else -1
 		_assign_mineral_types(destination)
 		seed_value = original_seed
 	current_level = destination
+	expedition_record.depth = maxi(int(expedition_record.depth), destination)
+	var unlocked_reward := destination > deepest_reached and DEPTH_REWARDS.has(destination)
+	deepest_reached = maxi(deepest_reached, destination)
+	if current_level == 3 and descent_access < 0:
+		descent_access = _pick_descent_access()
 	current_cave_id = world.entry if arrival < 0 else arrival
 	selected_cave = current_cave_id
 	visited_caves[current_cave_id] = true
 	analysis_mode = true
-	unit_position = world.caves[current_cave_id].position
+	unit_position = _level_access_position(current_cave_id)
 	selected_cave_focus = unit_position
 	move_target = unit_position
 	moving = false
@@ -4900,6 +5617,9 @@ func _change_underground_level(destination: int, arrival: int) -> void:
 	_focus_world_position(unit_position, zoom_level)
 	_update_map_stats()
 	_update_view_mode_ui()
+	if unlocked_reward:
+		_record_expedition_milestone("Fita: %s" % DEPTH_REWARDS[destination])
+		status_label.text = "★ FITA DESBLOQUEJADA\n%s a la pròxima expedició" % DEPTH_REWARDS[destination]
 	queue_redraw()
 	_save_active_profile()
 
@@ -4916,9 +5636,17 @@ func _descend_to_lower_level() -> void:
 func _can_descend_to_lower_level() -> bool:
 	if mining_cave >= 0 or bio_scan_room >= 0:
 		return false
-	return _has_descent_elevator(descent_access) and analysis_mode and selected_cave == descent_access and current_cave_id == descent_access and not moving and _cave_at_position(unit_position) == descent_access and unit_position.distance_to(world.caves[descent_access].position) <= 42.0
+	return _has_descent_elevator(descent_access) and analysis_mode and selected_cave == descent_access and current_cave_id == descent_access and not moving and _cave_at_position(unit_position) == descent_access and unit_position.distance_to(_level_access_position(descent_access)) <= 42.0
 
-func _new_world(value: int, keep_dropped_materials: bool = false) -> void:
+func _new_world(value: int) -> void:
+	if not expedition_record.is_empty():
+		_remember_current_biology()
+		if expedition_record.outcome == "En curs":
+			_finish_expedition_record("Reiniciada")
+		expedition_history.append(expedition_record)
+	expedition_record = _new_expedition_record(value)
+	starting_rewards_depth = deepest_reached
+	expedition_completed = false
 	depth_trip_target = -1
 	owned_modifiers.clear()
 	equipped_modifiers.clear()
@@ -4927,12 +5655,10 @@ func _new_world(value: int, keep_dropped_materials: bool = false) -> void:
 	ladder_uses_spent = 0
 	rockfall_clear_remaining = 0.0
 	health = 100.0
-	medkits = 1
+	medkits = 1 + int(starting_rewards_depth >= 16)
 	rockfall_remaining = 0.0
 	rockfall_cooldown = 0.0
 	rockfall_corridor_id = -1
-	if not keep_dropped_materials:
-		dropped_materials.clear()
 	for card in resource_gain_cards.values():
 		card.queue_redraw()
 	resource_gains.clear()
@@ -4956,6 +5682,9 @@ func _new_world(value: int, keep_dropped_materials: bool = false) -> void:
 	var start_time := Time.get_ticks_msec()
 	world = Generator.generate(seed_value)
 	descent_access = _pick_descent_access()
+	_place_descent_position()
+	fauna_sites.clear()
+	material_sites.clear()
 	_place_flora_sites()
 	_place_fauna_sites()
 	_place_material_sites(true)
@@ -4965,10 +5694,10 @@ func _new_world(value: int, keep_dropped_materials: bool = false) -> void:
 	quartz_in_pack = 0
 	magnetite_in_pack = 0
 	crafted_beacons = 0
-	oxygen_cartridges = 0
+	oxygen_cartridges = int(starting_rewards_depth >= 13)
 	flashlight_on = false
 	flashlight_charge = _helmet_battery_duration()
-	flashlight_spares = FLASHLIGHT_SPARE_BATTERIES
+	flashlight_spares = FLASHLIGHT_SPARE_BATTERIES + int(starting_rewards_depth >= 7)
 	suit_integrity = 100.0
 	suit_tier = 0
 	mining_tool = 0
@@ -4979,6 +5708,7 @@ func _new_world(value: int, keep_dropped_materials: bool = false) -> void:
 	analyzed_flora.clear()
 	analyzed_fauna.clear()
 	field_photos.clear()
+	saved_photo_bytes.clear()
 	seen_fauna.clear()
 	selected_fauna = -1
 	flora_samples.clear()
@@ -5022,6 +5752,7 @@ func _descend_to_level_one() -> void:
 		return
 	surface_mode = false
 	current_level = 1
+	expedition_record.depth = maxi(int(expedition_record.depth), 1)
 	analysis_mode = true
 	selected_cave = world.entry
 	current_cave_id = world.entry
@@ -5084,7 +5815,11 @@ func _discovery_percentage(count: Vector2i) -> String:
 	return "%d%%" % floori(100.0 * float(count.x) / float(count.y))
 
 func _input(event: InputEvent) -> void:
-	if death_dialog.visible or profiles_dialog.visible or depth_trip_dialog.visible or restart_run_dialog.visible:
+	if event is InputEventMouseMotion and not surface_mode and not analysis_mode:
+		queue_redraw()
+	if discovery_dialog.visible or delete_profile_dialog.visible:
+		return
+	if death_dialog.visible or victory_dialog.visible or profiles_dialog.visible or depth_trip_dialog.visible or restart_run_dialog.visible or rewards_dialog.visible or history_dialog.visible:
 		return
 	if surface_mode:
 		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and not _over_ui(event.position):
@@ -5165,11 +5900,9 @@ func _input(event: InputEvent) -> void:
 				return
 			if rockfall_clear_remaining > 0.0:
 				return
-			if _recover_dropped_materials(event.position):
-				return
 			if analysis_mode:
 				if _has_level_elevator(selected_cave) and Geometry2D.is_point_in_polygon(
-						event.position, _elevator_outline(_world_to_screen(world.caves[selected_cave].position), _underground_elevator_extent())):
+						event.position, _elevator_outline(_world_to_screen(_level_access_position(selected_cave)), _underground_elevator_extent())):
 					_approach_level_access(true)
 					return
 				if _material_is_visible(selected_cave) and event.position.distance_to(_material_marker_position(selected_cave)) <= 15.0 * _isometric_object_scale():
@@ -5297,7 +6030,7 @@ func _update_view_mode_ui() -> void:
 	base_catalog_button.show()
 	_update_research_panel()
 	if surface_mode:
-		mode_heading_label.text = "BASE MARCIANA · NIVELL 0"
+		mode_heading_label.text = "BASE MARCIANA · SUPERFÍCIE 0"
 		seed_edit.visible = false
 		new_game_button.visible = false
 		map_return_button.visible = false
@@ -5319,7 +6052,7 @@ func _update_view_mode_ui() -> void:
 			status_label.text = "SALA EXPLORADA · VISUALITZACIÓ"
 	else:
 		analysis_mode = false
-		mode_heading_label.text = "MAPA DE RECERCA   /   NIVELL %d" % -current_level
+		mode_heading_label.text = "MAPA DE RECERCA   /   ESTRAT %d" % -current_level
 		seed_edit.visible = true
 		new_game_button.visible = true
 		map_return_button.visible = false
@@ -5335,7 +6068,7 @@ func _update_view_mode_ui() -> void:
 	if not surface_mode:
 		var zone_start := 1 + floori(float(current_level - 1) / 3.0) * 3
 		var zone: String = DEPTH_ZONE_NAMES.get(current_level, DEPTH_ZONE_NAMES.get(zone_start, OXIDIZED_CAVES_NAME))
-		level_title_label.text = "%s · Nivell −%d" % [zone, current_level]
+		level_title_label.text = "%s · Estrat −%d" % [zone, current_level]
 	_update_flora_button()
 	_layout_catalogs_panel()
 	_refresh_depth_selector()
@@ -5366,6 +6099,8 @@ func _refresh_room_progress() -> void:
 		"calent": title = "SALA CALENTA"
 	var explored_percent := 100 if explored_caves.has(cave_id) else floori(_room_reveal_ratio(world.caves[cave_id]) * 100.0)
 	room_progress_label.text = "%s %02d · %d%% ESCANEJAT" % [title, cave_id + 1, explored_percent]
+	if _is_biome_workshop(cave_id):
+		room_progress_label.text += " · TALLER"
 
 func _return_to_map(requested_zoom: float = 0.62) -> void:
 	isometric_passage_id = -1
@@ -5403,24 +6138,21 @@ func _expedition_emergency() -> String:
 		return "SENSE BATERIES DEL CASC"
 	return ""
 
+func _death_summary(reason: String) -> String:
+	return "%s\n\nL’explorador ha mort. La pròxima expedició començarà a la superfície, amb equip inicial i una llavor nova." % reason
+
 func _end_expedition(reason: String) -> void:
-	death_dialog.dialog_text = "%s\n\nL’explorador ha mort. Tornaràs a començar a la superfície amb l’equip inicial." % reason
-	var total_materials := materials_in_pack + quartz_in_pack + magnetite_in_pack
-	if total_materials > 0:
-		dropped_materials.append({"level": current_level, "position": unit_position, "amount": materials_in_pack,
-			"quartz": quartz_in_pack, "magnetite": magnetite_in_pack})
-		death_dialog.dialog_text += "\n\nMaterials abandonats al nivell %d: %d. Busca la caixa taronja al lloc de l’incident." % [-current_level, total_materials]
-		materials_in_pack = 0
-		quartz_in_pack = 0
-		magnetite_in_pack = 0
+	if death_dialog.visible:
+		return
+	_finish_expedition_record("Mort", reason)
+	death_dialog.dialog_text = _death_summary(reason)
+	materials_in_pack = 0
+	quartz_in_pack = 0
+	magnetite_in_pack = 0
 	death_dialog.popup_centered(Vector2i(440, 0))
 	_save_active_profile()
 
 func _restart_after_death() -> void:
-	if not dropped_materials.is_empty():
-		_new_world(seed_value, true)
-		_save_active_profile()
-		return
 	_start_run_with_new_seed()
 	_save_active_profile()
 
@@ -5430,27 +6162,6 @@ func _start_run_with_new_seed() -> void:
 		next_seed = (seed_value + 1) & 0x7fffffff
 	seed_edit.text = str(next_seed)
 	_new_world(next_seed)
-
-func _recover_dropped_materials(screen_position: Vector2) -> bool:
-	var scale := _isometric_object_scale() if analysis_mode else clampf(zoom_level / MAP_ENTRY_ZOOM, 0.42, 1.15)
-	for index in range(dropped_materials.size()):
-		var cargo := dropped_materials[index]
-		if cargo.level != current_level or not _is_revealed(cargo.position):
-			continue
-		if screen_position.distance_to(_world_to_screen(cargo.position)) > maxf(5.0, 11.0 * scale):
-			continue
-		if unit_position.distance_to(cargo.position) > 32.0:
-			status_label.text = "APROPA’T A LA CAIXA PER RECUPERAR ELS MATERIALS"
-			return true
-		dropped_materials.remove_at(index)
-		materials_in_pack += int(cargo.amount)
-		quartz_in_pack += int(cargo.get("quartz", 0))
-		magnetite_in_pack += int(cargo.get("magnetite", 0))
-		_update_equipment_display()
-		status_label.text = "MATERIALS RECUPERATS · +%d" % (int(cargo.amount) + int(cargo.get("quartz", 0)) + int(cargo.get("magnetite", 0)))
-		queue_redraw()
-		return true
-	return false
 
 func _enter_surface_base() -> void:
 	rockfall_clear_remaining = 0.0
@@ -5482,13 +6193,14 @@ func _update_oxygen_display() -> void:
 		label.text = caption
 		label.add_theme_color_override("font_color", ORANGE if percent <= LOW_SUPPLY_PERCENT else CYAN)
 func _request_depth_trip(destination: int) -> void:
-	if destination == current_level:
+	var workshop_trip := _depth_has_workshop(destination)
+	if destination == current_level and not workshop_trip:
 		return
-	if destination > OXIDIZED_CAVES_DEPTH:
-		status_label.text = "NIVELL −%d ENCARA NO DISPONIBLE" % destination
+	if destination > CAMPAIGN_DEPTH:
+		status_label.text = "ESTRAT −%d ENCARA NO DISPONIBLE" % destination
 		return
 	if mining_cave >= 0 or bio_scan_room >= 0 or rockfall_clear_remaining > 0.0 or level_navigation_target >= 0:
-		status_label.text = "ACABA L’ACCIÓ EN CURS ABANS DE CANVIAR DE NIVELL"
+		status_label.text = "ACABA L’ACCIÓ EN CURS ABANS DE CANVIAR D’ESTRAT"
 		return
 	var going_down := destination > current_level
 	var depth := maxi(1, current_level)
@@ -5501,7 +6213,7 @@ func _request_depth_trip(destination: int) -> void:
 		var state := _depth_state(depth)
 		var target: int = state.descent_access if going_down else state.world.entry
 		if going_down and not state.explored_caves.has(target):
-			status_label.text = "PRIMER HAS DE DESCOBRIR L’ACCÉS AL NIVELL −%d" % (depth + 1)
+			status_label.text = "PRIMER HAS DE DESCOBRIR L’ACCÉS A L’ESTRAT −%d" % (depth + 1)
 			return
 		var leg := _known_depth_leg(state, origin, target)
 		if leg.is_empty():
@@ -5512,7 +6224,7 @@ func _request_depth_trip(destination: int) -> void:
 			leg_distance += unit_position.distance_to(state.world.caves[origin].position)
 		distance += leg_distance
 		var seconds := leg_distance / maxf(1.0, _boots_speed(equipped_boots) * 0.7 * 0.75)
-		var pressure: float = [0.0, 0.03, 0.10, 0.15][depth]
+		var pressure: float = [0.0, 0.03, 0.10, 0.15][mini(depth, 3)]
 		suit_wear += seconds * (pressure * (1.0 - float(suit_tier) * 0.04) + (0.06 if depth >= 2 else 0.0))
 		rockfall_on_route = rockfall_on_route or bool(leg.blocked)
 		depth += 1 if going_down else -1
@@ -5522,10 +6234,23 @@ func _request_depth_trip(destination: int) -> void:
 		if next.is_empty():
 			ladders_needed += 1
 			if depth != destination:
-				status_label.text = "PRIMER HAS D’EXPLORAR EL NIVELL −%d" % depth
+				status_label.text = "PRIMER HAS D’EXPLORAR L’ESTRAT −%d" % depth
 				return
 			break
 		origin = int(next.world.entry if going_down else next.descent_access)
+	var destination_state := _depth_state(destination)
+	if workshop_trip and not destination_state.is_empty() and origin != destination_state.world.entry:
+		var leg := _known_depth_leg(destination_state, origin, int(destination_state.world.entry))
+		if leg.is_empty():
+			status_label.text = "CAP RUTA PER GALERIES RECORREGUDES FINS AL TALLER"
+			return
+		var workshop_distance: float = leg.distance
+		if current_level == destination:
+			workshop_distance += unit_position.distance_to(destination_state.world.caves[origin].position)
+		distance += workshop_distance
+		var pressure: float = [0.0, 0.03, 0.10, 0.15][mini(destination, 3)]
+		suit_wear += workshop_distance / maxf(1.0, _boots_speed(equipped_boots) * 0.7 * 0.75) * (pressure + 0.06)
+		rockfall_on_route = rockfall_on_route or bool(leg.blocked)
 	if ladders_needed > _ladder_uses_left():
 		status_label.text = "ESCALA ESGOTADA · REPARA-LA A LA BASE"
 		return
@@ -5542,13 +6267,15 @@ func _request_depth_trip(destination: int) -> void:
 		warnings.append("Ets en una zona fosca i no tens bateria ni recanvis per al llum del casc.")
 	if rockfall_on_route:
 		warnings.append("Hi ha un despreniment pel camí. Hauràs de retirar les roques.")
-	_confirm_depth_action(destination, _begin_depth_trip.bind(destination), warnings)
+	_confirm_depth_action(destination, _begin_depth_trip.bind(destination), warnings, workshop_trip)
 
-func _confirm_depth_action(destination: int, action: Callable, warnings: PackedStringArray = PackedStringArray()) -> void:
+func _confirm_depth_action(destination: int, action: Callable, warnings: PackedStringArray = PackedStringArray(), workshop_trip: bool = false) -> void:
 	var message := "Vols tornar a la base?"
-	if destination > 0:
+	if workshop_trip:
+		message = "Vols anar al taller de l’estrat −%d?" % destination
+	elif destination > 0:
 		var direction := "pujar" if destination < current_level else "baixar"
-		message = "Vols %s al nivell −%d?" % [direction, destination]
+		message = "Vols %s a l’estrat −%d?" % [direction, destination]
 	if not warnings.is_empty():
 		message += "\n\n" + "\n\n".join(warnings)
 	pending_depth_action = action
@@ -5595,6 +6322,10 @@ func _continue_depth_trip() -> void:
 	if depth_trip_target < 0:
 		return
 	if current_level == depth_trip_target:
+		if _depth_has_workshop(current_level):
+			_start_level_navigation(int(world.entry))
+			if moving:
+				return
 		depth_trip_target = -1
 		return
 	if surface_mode:
@@ -5624,7 +6355,7 @@ func _start_level_navigation(target: int) -> void:
 	if not going_up and _is_unopened_shaft(target) and _ladder_uses_left() <= 0:
 		status_label.text = "ESCALA ESGOTADA · REPARA-LA A LA BASE"
 		return
-	var access_position: Vector2 = world.caves[target].position
+	var access_position := _level_access_position(target)
 	if _cave_at_position(unit_position) == target and unit_position.distance_to(access_position) <= 42.0:
 		moving = false
 		move_path.clear()
@@ -5647,7 +6378,7 @@ func _start_level_navigation(target: int) -> void:
 	level_navigation_target = target
 	center_map_during_move = true
 	moving = true
-	status_label.text = "CAMINANT CAP A LA PUJADA" if going_up else "CAMINANT CAP A LA BAIXADA"
+	status_label.text = "CAMINANT CAP AL TALLER" if going_up and depth_trip_target == current_level else ("CAMINANT CAP A LA PUJADA" if going_up else "CAMINANT CAP A LA BAIXADA")
 	_update_base_return_availability()
 
 func _finish_level_navigation(target: int) -> void:
@@ -5655,6 +6386,12 @@ func _finish_level_navigation(target: int) -> void:
 		depth_trip_target = -1
 		return
 	if target == world.entry:
+		if depth_trip_target == current_level and _depth_has_workshop(current_level):
+			depth_trip_target = -1
+			_inspect_map_room(target, unit_position)
+			status_label.text = "TALLER DEL BIOMA · OBRE EQUIP I MILLORES"
+			_save_active_profile()
+			return
 		_finish_return_to_entry()
 	elif _has_descent_elevator(target):
 		_inspect_map_room(target, unit_position)
@@ -5682,19 +6419,32 @@ func _update_base_return_availability() -> void:
 		if button.get_parent() != navigation_panel:
 			button.reparent(navigation_panel, false)
 	var has_descent := not surface_mode and _has_descent_elevator(descent_access)
-	base_return_button.text = "PUJA AL NIVELL %d" % -(current_level - 1) if current_level > 1 else "TORNA A LA BASE"
+	base_return_button.text = "PUJA A L’ESTRAT %d" % -(current_level - 1) if current_level > 1 else "TORNA A LA BASE"
 	base_return_button.tooltip_text = "Camina fins a l’accés superior i puja."
 	descend_navigation_button.visible = has_descent
-	descend_navigation_button.text = "BAIXA AL NIVELL %d" % -(current_level + 1)
+	descend_navigation_button.text = "BAIXA A L’ESTRAT %d" % -(current_level + 1)
 	descend_navigation_button.tooltip_text = "Camina fins a l’accés inferior descobert i baixa."
-	lower_level_button.visible = _can_use_selected_level_access()
+	var final_research := _can_complete_final_research()
+	lower_level_button.visible = final_research or _can_use_selected_level_access()
 	base_return_button.visible = not surface_mode and current_level > 0 and not (
 		lower_level_button.visible and selected_cave == world.entry)
 	if lower_level_button.visible:
 		if selected_cave != world.entry:
 			descend_navigation_button.hide()
-		lower_level_button.text = ("↑ " if selected_cave == world.entry else "↓ ") + _level_access_label(selected_cave)
+		lower_level_button.text = ("VEURE EL FINAL" if expedition_completed else "INVESTIGA EL NUCLI") if final_research else (("↑ " if selected_cave == world.entry else "↓ ") + _level_access_label(selected_cave))
 	_layout_room_controls()
+
+func _can_complete_final_research() -> bool:
+	return analysis_mode and not moving and mining_cave < 0 and bio_scan_room < 0 and rockfall_clear_remaining <= 0.0 and _is_final_room(selected_cave) and explored_caves.has(selected_cave) and _cave_at_position(unit_position) == selected_cave
+
+func _complete_final_research() -> void:
+	if not _can_complete_final_research():
+		return
+	expedition_completed = true
+	_finish_expedition_record("Completada")
+	_update_base_return_availability()
+	_save_active_profile()
+	victory_dialog.popup_centered(Vector2i(460, 0))
 
 func _can_use_selected_level_access() -> bool:
 	if surface_mode or not analysis_mode or moving or mining_cave >= 0 or bio_scan_room >= 0 or not _has_level_elevator(selected_cave):
@@ -5720,7 +6470,7 @@ func _approach_level_access(use_on_arrival: bool = false) -> void:
 		else:
 			lower_level_button.grab_focus()
 		return
-	var hatch: Vector2 = world.caves[selected_cave].position
+	var hatch := _level_access_position(selected_cave)
 	var path := _find_path(unit_position, hatch, {}, false, selected_cave)
 	if path.is_empty() or path.back().distance_to(hatch) > 42.0:
 		status_label.text = "CAP CAMÍ TRANSITABLE FINS A L’ACCÉS"
