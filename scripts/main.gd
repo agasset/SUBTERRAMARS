@@ -1,16 +1,44 @@
 extends Node2D
 
 const Generator = preload("res://scripts/world_generator.gd")
+const LocalSaveStore = preload("res://scripts/local_save_store.gd")
+const AUTOSAVE_SECONDS := 60.0
+const SAVED_GAME_FIELDS := [
+	"seed_value", "current_level", "surface_mode", "analysis_mode", "current_cave_id",
+	"selected_cave", "selected_cave_focus", "unit_position", "explorer_facing", "zoom_level", "camera_offset",
+	"health", "medkits", "oxygen_seconds", "oxygen_cartridges", "suit_tier", "suit_integrity",
+	"mining_tool", "mining_tool_integrity", "equipped_boots", "boots_integrity", "bio_scanner_tier", "bio_scanner_integrity",
+	"flashlight_on", "flashlight_charge", "flashlight_spares", "crafted_beacons", "materials_in_pack",
+	"quartz_in_pack", "magnetite_in_pack", "ladder_uses_spent", "repair_kit_uses_spent",
+	"supply_tiers", "owned_modifiers", "equipped_modifiers", "equipment_research_spent", "dropped_materials",
+	"rockfall_cooldown", "last_revealed_cell", "isometric_passage_id", "inspection_corridor_id",
+	"inspection_destination_cave_id", "inspect_on_cave_arrival", "moving", "move_path", "move_target",
+	"chained_cave_id", "chained_arrival", "level_navigation_target", "use_elevator_on_arrival",
+	"center_map_during_move", "mining_cave", "mining_remaining", "bio_scan_room", "bio_scan_fauna",
+	"bio_scan_elapsed", "selected_flora", "selected_fauna", "rockfall_clear_remaining"
+]
+var active_profile_id := ""
+var active_profile_name := ""
+var autosave_elapsed := 0.0
+var profiles_dialog: AcceptDialog
+var restart_run_dialog: ConfirmationDialog
+var profiles_list: OptionButton
+var profile_name_input: LineEdit
+var profiles_status: Label
+var save_profile_button: Button
+var load_profile_button: Button
 const BG := Color("07111c")
 const PANEL := Color("0c1b29")
 const CYAN := Color("5de5ed")
 const MUTED := Color("71909f")
 const ORANGE := Color("ffac62")
-const ANALYSIS_MIN_ZOOM := 2.8
+const ANALYSIS_MIN_ZOOM := 1.4
 const ANALYSIS_MAX_ZOOM := 7.0
 const ANALYSIS_ENTRY_ZOOM_FACTOR := 0.85
 const MAP_ENTRY_ZOOM := 0.90
 const SIDE_PANEL_SCALE := 0.82
+const ACCESSIBLE_GALLERY_COLOR := Color("abbeff")
+const BLOCKED_GALLERY_COLOR := Color("ff6b65")
 const MAP_MIN_ZOOM := 0.12
 const ISO_VERTICAL_RATIO := 0.5
 const LEVEL_EXIT_BEACON_COLOR := Color("ffbf61")
@@ -30,21 +58,38 @@ const OXIDIZED_CAVES_DEPTH := 3
 const OXIDIZED_CAVES_NAME := "Coves oxidades"
 var descent_access := -1
 var lower_level_button: Button
-var buy_folding_ladder_button: Button
-const STARTING_FOLDING_LADDERS := 2
+var repair_folding_ladder_button: Button
 const STRIP_LADDER_SLOT := 12
-var folding_ladders := STARTING_FOLDING_LADDERS
 var folding_ladder_icon: HBoxContainer
-const FOLDING_LADDER_COST := 2
+var repair_kit_footer: HBoxContainer
+var repair_kit_urgent := false
+const FOLDING_LADDER_REPAIR_COST := 2
 var use_elevator_on_arrival := false
-var depth_diagram: Control
+const CAMPAIGN_DEPTH := 20
+const DEPTH_ZONE_NAMES := {
+	1: OXIDIZED_CAVES_NAME,
+	4: "Cavernes cristal·lines",
+	7: "Galeries glacials",
+	10: "Jardins subterranis",
+	13: "Fractures geotèrmiques",
+	16: "Abisme biològic",
+	19: "El Llindar",
+	20: "El Nucli",
+}
+const DEPTH_CATEGORIES := ["Sales explorades", "Galeries recorregudes", "Flora analitzada", "Fauna observada", "Vetes descobertes"]
+var depth_diagram: ScrollContainer
+var depth_rows: Array[Button] = []
+var depth_percentages: Array[Label] = []
+var depth_trip_target := -1
+var pending_depth_action: Callable
+var depth_trip_dialog: ConfirmationDialog
 const LEVEL_STATE_FIELDS := [
 	"world", "walked_gallery_spans", "completed_gallery_traces", "revealed_mask",
 	"discovered_exits", "cave_floor_textures", "explored_caves", "visited_caves",
 	"detected_caves", "deployed_beacons", "used_beacons", "flora_sites",
 	"flora_species_by_room", "analyzed_flora", "fauna_sites", "fauna_species_by_room",
 	"fauna_patrol_ends", "fauna_time", "seen_fauna", "analyzed_fauna", "flora_samples", "fauna_samples",
-	"material_sites", "collected_materials", "rockfall_corridor_id", "rockfall_position",
+	"material_sites", "mineral_types", "collected_materials", "rockfall_corridor_id", "rockfall_position",
 	"rockfall_remaining", "rockfall_hit", "descent_access"
 ]
 var inspect_on_cave_arrival := false
@@ -110,33 +155,27 @@ var pulsing_equipment_actions: Dictionary[Button, bool] = {}
 var helmet_battery_card_button: Button
 var oxygen_seconds := OXYGEN_CAPACITY
 const BEACON_RANGE := 650.0
-const BEACON_RANGE_UPGRADE := 250.0
 const BEACON_STOCK := 2
 var deployed_beacons: Dictionary = {}
 var used_beacons: Dictionary = {}
-var beacon_range_upgraded := false
 var beacon_signal_meter: ProgressBar
-var beacon_signal_label: Label
-var beacon_upgrade_button: Button
+var beacon_footer: HBoxContainer
 const BEACON_CRAFT_COST := 2
 const OXYGEN_CRAFT_COST := 1
 const OXYGEN_CARTRIDGE_SECONDS := 300.0
-const SUIT_CRAFT_COST := 3
 var suit_integrity := 100.0
-var reinforced_suit := false
+var suit_tier := 0
 var craft_suit_button: Button
 const MINING_TOOLS := ["Pic manual", "Trepant", "Extractor"]
 const MINING_SECONDS := [6.0, 4.0, 2.0]
 const MINING_WEAR_PER_DEPOSIT := [8.0, 6.0, 4.0]
 const MINING_REPAIR_COST := 1
-const MINING_TOOL_COSTS := [0, 2, 4]
 var mining_tool := 0
 var mining_tool_integrity := 100.0
 var repair_mining_tool_button: Button
 const BOOT_MODELS := ["Estàndard", "Lleugeres", "Impulsades"]
 const BOOT_SPEEDS := [145.0, 175.0, 210.0]
-const BOOT_COSTS := [0, 2, 4]
-const BOOT_WEAR_PER_UNIT := 0.0125
+const BOOT_WEAR_PER_UNIT := 0.00125
 const BOOT_REPAIR_COST := 1
 var equipped_boots := 0
 var boots_integrity := 100.0
@@ -146,7 +185,13 @@ var repair_boots_button: Button
 const REPAIR_KIT_COST := 2
 const FIELD_REPAIR_AMOUNT := 30.0
 enum FieldRepair { SUIT, BOOTS, MINING_TOOL, BIO_SCANNER }
-var repair_kits := 0
+var repair_kit_uses_spent := 0
+const STRIP_QUARTZ_SLOT := 16
+const STRIP_MAGNETITE_SLOT := 17
+const STRIP_MEDKIT_SLOT := 18
+var quartz_in_pack := 0
+var magnetite_in_pack := 0
+var mineral_types: Dictionary = {}
 var buy_repair_kit_button: Button
 var use_repair_kit_button: Button
 var field_repair_menu: PopupMenu
@@ -159,6 +204,7 @@ var buy_helmet_battery_button: Button
 var inventory_window: AcceptDialog
 var inventory_tabs: TabContainer
 var inventory_values: Array[Label] = []
+var inventory_details: Array[Label] = []
 var inventory_strip_values: Array[Label] = []
 var inventory_strip_meters: Dictionary[int, ProgressBar] = {}
 var helmet_light_card: PanelContainer
@@ -177,14 +223,11 @@ const RESOURCE_GAIN_DURATION_MS := 1600
 var resource_gain_cards: Dictionary[int, PanelContainer] = {}
 var resource_previous_counts: Dictionary[int, int] = {}
 var resource_gains: Dictionary[int, Vector2i] = {}
-const INVENTORY_TITLES := ["Materials", "Balises disponibles", "Reserves d’oxigen",
-	"Eina de mineria", "Vestit espacial", "Llum del casc", "Punts de recerca", "Mostres recollides", "Registres i fotos", "Botes", "Caixes d’eines", "Escàner biològic", "Escales plegables"]
+const INVENTORY_TITLES := ["Ferro", "Balises", "Reserves d’oxigen",
+	"Eina de mineria", "Vestit espacial", "Llum del casc", "Punts de recerca", "Mostres recollides", "Registres i fotos", "Botes", "Caixa d’eines", "Escàner biològic", "Escala plegable"]
 const STRIP_BIO_SCANNER_SLOT := 11
 const STRIP_BATTERY_SLOT := 13
 const STRIP_OXYGEN_SLOT := 14
-const BIO_SCAN_SECONDS := [6.0, 3.0]
-const BIO_SCAN_WEAR := [8.0, 4.0]
-const BIO_SCANNER_UPGRADE_COST := 3
 const BIO_SCANNER_REPAIR_COST := 1
 var bio_scanner_tier := 0
 var bio_scanner_integrity := 100.0
@@ -194,7 +237,39 @@ var bio_scan_elapsed := 0.0
 var upgrade_bio_scanner_button: Button
 var repair_bio_scanner_button: Button
 var mining_offer: Label
-var workshop_balance: Label
+var workshop_materials_balance: Label
+const SUPPLY_UPGRADES := {
+	"oxygen_tank": ["Dipòsit d’oxigen", "+2 min de capacitat per nivell", 120.0],
+	"oxygen_reserve": ["Reserva d’oxigen", "+30 s per reserva i nivell", 30.0],
+	"helmet_light": ["Bateria del casc", "+20 s per nivell", 20.0],
+	"beacon": ["Balisa", "+50 unitats d’abast per nivell", 50.0],
+	"medkit": ["Farmaciola", "Més vida recuperada per ús", 65.0 / 19.0],
+	"repair_kit": ["Caixa d’eines", "Més integritat recuperada per ús", 70.0 / 19.0],
+	"ladder": ["Escala plegable", "+1 ús per nivell", 1.0],
+}
+const EQUIPMENT_MODIFIERS := {
+	"boots_magma": ["botes", "Sola tèrmica", "Redueix el desgast sobre roca calenta i magma.", "calent"],
+	"boots_water": ["botes", "Sola de drenatge", "Manté la velocitat en terreny inundat.", "aigua"],
+	"boots_ice": ["botes", "Grampons", "Manté la velocitat i redueix el desgast sobre gel.", "gel"],
+	"suit_hot": ["vestit", "Aïllament tèrmic", "Redueix el desgast per calor.", "calent"],
+	"suit_cold": ["vestit", "Aïllament criogènic", "Redueix el desgast per fred.", "gel"],
+	"mining_crystal": ["mineria", "Capçal de precisió", "Permet extreure quars de les vetes cristal·lines.", "quars"],
+	"mining_hard": ["mineria", "Capçal reforçat", "Permet extreure magnetita de les vetes dures.", "magnetita"],
+	"scanner_ferric": ["escaner", "Filtre espectral fèrric", "Detecta la molsa i l’escarabat fèrrics.", "ferric"],
+}
+const MODIFIER_MATERIAL_COST := 3
+const MODIFIER_RESEARCH_COST := 1
+var owned_modifiers: Dictionary[String, bool] = {}
+var equipped_modifiers: Dictionary[String, String] = {}
+var modifier_buttons: Dictionary[String, Button] = {}
+const MAX_EQUIPMENT_LEVEL := 20
+var equipment_research_spent := 0
+var supply_tiers: Dictionary[String, int] = {}
+var ladder_uses_spent := 0
+var supply_upgrade_buttons: Dictionary[String, Button] = {}
+var supply_upgrade_offers: Dictionary[String, Label] = {}
+var suit_upgrade_offer: Label
+var scanner_upgrade_offer: Label
 var mining_tool_button: Button
 var material_sites: Dictionary = {}
 var collected_materials: Dictionary = {}
@@ -204,6 +279,7 @@ var death_dialog: AcceptDialog
 var crafted_beacons := 0
 var oxygen_cartridges := 0
 var flashlight_on := false
+var helmet_light_zone_lit := true
 const FLASHLIGHT_BATTERY_SECONDS := 180.0
 const FLASHLIGHT_SPARE_BATTERIES := 1
 var flashlight_charge := FLASHLIGHT_BATTERY_SECONDS
@@ -218,17 +294,19 @@ var map_return_button: Button
 var center_explorer_button: Button
 var descend_button: Button
 var base_return_button: Button
-var returning_to_base := false
+var level_navigation_target := -1
+var descend_navigation_button: Button
 var level_panel: Control
-var bottom_panel: Control
 var equipment_bar: PanelContainer
-var analysis_tools_panel: Control
+var level_title_label: Label
 var room_progress_label: Label
 var mining_cave := -1
 var mining_remaining := 0.0
-var room_navigation_heading: Label
-var room_section_frames: Dictionary[Label, Panel] = {}
-var map_legend_window: AcceptDialog
+var navigation_panel: Control
+var inspect_room_button: Button
+var fit_map_button: Button
+var map_legend_panel: Control
+var map_options_section: Control
 var map_options_window: AcceptDialog
 var show_signal_rings := true
 var show_findings := true
@@ -267,13 +345,10 @@ var field_photos: Dictionary = {}
 var taking_field_photo := false
 var field_camera_button: Button
 var base_catalog_button: Button
-var research_panel: Control
-var research_points_label: Label
-var scanner_upgrade_button: Button
-var scanner_upgraded := false
+var catalogs_panel: Control
 var cave_count_label: Label
-var access_heading_label: Label
 var exit_count_label: Label
+var blocked_exit_count_label: Label
 var level_progress_strip: HBoxContainer
 var level_progress_values: Array[Label] = []
 var level_progress_meters: Array[ProgressBar] = []
@@ -283,19 +358,28 @@ func _ready() -> void:
 	_new_world(seed_value)
 	get_viewport().size_changed.connect(_layout_panels)
 	equipment_bar.resized.connect(_layout_panels)
-	level_progress_strip.resized.connect(_layout_panels)
+	level_progress_strip.resized.connect(_layout_panels, CONNECT_DEFERRED)
 	_layout_panels()
 
 func _process(delta: float) -> void:
-	if death_dialog.visible:
+	if death_dialog.visible or profiles_dialog.visible or depth_trip_dialog.visible or restart_run_dialog.visible:
 		return
+	if not active_profile_id.is_empty():
+		autosave_elapsed += delta
+		if autosave_elapsed >= AUTOSAVE_SECONDS:
+			_save_active_profile()
 	_update_rockfall(delta)
 	if analysis_mode and moving and inspection_corridor_id >= 0 and rockfall_corridor_id < 0 and rockfall_cooldown <= 0.0 and randf() < delta / 180.0 and _cave_at_position(unit_position) < 0:
 		_warn_of_rockfall(inspection_corridor_id, true)
 	if not surface_mode and not world.is_empty():
+		_update_automatic_helmet_light(unit_position)
 		_update_flashlight_charge(delta)
 		var pressure_wear: float = [0.0, 0.03, 0.10, 0.15][current_level]
-		suit_integrity = maxf(0.0, suit_integrity - delta * pressure_wear * (0.4 if reinforced_suit else 1.0))
+		var environment := _room_environment(_cave_at_position(unit_position))
+		var temperature_wear := 0.06 if environment == "calent" or environment == "gel" else 0.0
+		if _modifier_protects("vestit", environment):
+			temperature_wear *= 0.2
+		suit_integrity = maxf(0.0, suit_integrity - delta * (pressure_wear * (1.0 - float(suit_tier) * 0.04) + temperature_wear))
 		var time_without_oxygen := maxf(0.0, delta - oxygen_seconds)
 		oxygen_seconds = maxf(0.0, oxygen_seconds - delta)
 		if oxygen_seconds <= 0.0 and oxygen_cartridges > 0:
@@ -339,13 +423,14 @@ func _process(delta: float) -> void:
 			else:
 				next_position = unit_position + difference / distance * remaining_distance
 				remaining_distance = 0.0
-			if not flashlight_on and not _is_discovered_move_segment(unit_position, next_position):
+			var can_light_step := flashlight_on or (flashlight_charge > 0.0 and helmet_light_zone_lit and not _has_ambient_light(next_position))
+			if not can_light_step and not _is_discovered_move_segment(unit_position, next_position):
 				if _cave_at_position(unit_position) >= 0:
 					move_target = unit_position
 					move_path.clear()
 					chained_cave_id = -1
 					use_elevator_on_arrival = false
-					returning_to_base = false
+					level_navigation_target = -1
 				if not warned_dark_movement:
 					_show_light_warning(_world_to_screen(unit_position), "PAS BLOQUEJAT")
 					warned_dark_movement = true
@@ -374,14 +459,15 @@ func _process(delta: float) -> void:
 			_apply_rockfall(next_position)
 			_record_gallery_step(unit_position, next_position)
 			var distance_walked := unit_position.distance_to(next_position)
-			var distance_with_broken_boots := maxf(0.0, distance_walked - boots_integrity / BOOT_WEAR_PER_UNIT)
-			boots_integrity = maxf(0.0, boots_integrity - distance_walked * BOOT_WEAR_PER_UNIT)
+			var distance_with_broken_boots := maxf(0.0, distance_walked - boots_integrity / _boots_wear_per_unit())
+			boots_integrity = maxf(0.0, boots_integrity - distance_walked * _boots_wear_per_unit())
 			if distance_with_broken_boots > 0.0:
 				health = maxf(0.0, health - distance_with_broken_boots * BROKEN_BOOTS_HEALTH_PER_UNIT)
 				_update_health_display()
 			if not unit_position.is_equal_approx(next_position):
 				explorer_facing = unit_position.direction_to(next_position)
 			unit_position = next_position
+			_update_automatic_helmet_light(unit_position)
 			if health <= 0.0:
 				_end_expedition("FERIDES PER CAMINAR AMB LES BOTES TRENCADES")
 				return
@@ -407,7 +493,7 @@ func _process(delta: float) -> void:
 		if current_cell != last_revealed_cell:
 			var reveal_cave_id := _cave_at_position(unit_position)
 			var reveal_radius := 3 if reveal_cave_id >= 0 and not explored_caves.has(reveal_cave_id) else 5
-			if reveal_radius == 3 and scanner_upgraded:
+			if reveal_radius == 3 and _supply_tier("helmet_light") >= 3:
 				reveal_radius = 4
 			if flashlight_on:
 				reveal_radius += 1
@@ -424,9 +510,10 @@ func _process(delta: float) -> void:
 	if use_elevator_on_arrival and not moving:
 		use_elevator_on_arrival = false
 		_use_selected_level_access()
-	if returning_to_base and not moving:
-		returning_to_base = false
-		_finish_return_to_entry()
+	if level_navigation_target >= 0 and not moving:
+		var target := level_navigation_target
+		level_navigation_target = -1
+		_finish_level_navigation(target)
 	if center_map_during_move:
 		if not surface_mode and not analysis_mode:
 			_focus_world_position(unit_position, zoom_level)
@@ -504,12 +591,13 @@ func _draw() -> void:
 			var signal_center := _world_to_screen(cave.position)
 			_draw_beacon_waves(signal_center, _beacon_range() * zoom_level, 1.0, Color("abbeff"))
 			_draw_beacon_light(signal_center + Vector2(0, -38) * icon_scale, icon_scale, Color("abbeff"))
-		if show_findings and fauna_sites.has(cave.id) and (explored_caves.has(cave.id) or seen_fauna.has(cave.id)):
+		if show_findings and _fauna_is_visible_in_room(cave.id):
 			var fauna_marker := _world_to_screen(fauna_sites[cave.id])
 			if explored_caves.has(cave.id):
 				fauna_marker = _world_to_screen(cave.position) + Vector2(-20, -19) * icon_scale
-			_draw_fauna_map_badge(self, fauna_marker, fauna_species_by_room.get(cave.id, "escarabat"), icon_scale)
-			if not analyzed_fauna.has(cave.id):
+			var observed := analyzed_fauna.has(cave.id)
+			_draw_fauna_map_badge(self, fauna_marker, fauna_species_by_room.get(cave.id, "escarabat"), icon_scale, observed)
+			if not observed:
 				draw_string(ThemeDB.fallback_font, fauna_marker + Vector2(-15, 4) * icon_scale, "!", HORIZONTAL_ALIGNMENT_LEFT, -1, maxi(7, roundi(12 * icon_scale)), ORANGE)
 		if not explored_caves.has(cave.id):
 			if show_findings and analyzed_flora.has(cave.id):
@@ -522,12 +610,12 @@ func _draw() -> void:
 			var access_text := _level_access_label(cave.id, true)
 			_draw_elevator_sign(marker + Vector2(38, 35) * icon_scale, access_text, cave.id != world.entry, icon_scale, _is_unopened_shaft(cave.id))
 		_draw_room_state_badge(marker, icon_scale, true)
-		if show_findings and flora_sites.has(cave.id):
+		if show_findings and _flora_is_visible_in_room(cave.id):
 			var plant_marker := marker + Vector2(-20, 0) * icon_scale
 			_draw_flora_symbol(self, plant_marker, 0.7 * icon_scale, flora_species_by_room[cave.id])
 			if not analyzed_flora.has(cave.id):
 				draw_string(ThemeDB.fallback_font, plant_marker + Vector2(-13, 2) * icon_scale, "!", HORIZONTAL_ALIGNMENT_LEFT, -1, maxi(7, roundi(12 * icon_scale)), ORANGE)
-		if _has_pending_galleries(cave.id):
+		if _has_accessible_pending_galleries(cave.id):
 			_draw_room_state_badge(marker + Vector2(18, 0) * icon_scale, icon_scale, false)
 	for cave in world.caves:
 		if cave.id != current_cave_id and not _can_inspect_cave(cave.id):
@@ -542,18 +630,14 @@ func _draw() -> void:
 				continue
 			var mouth := _world_to_screen(exit_info.position + exit_info.direction * 12.0)
 			if not reachable:
-				draw_line(_world_to_screen(exit_info.position), mouth, Color("ff6b65"), 1.5, true)
+				draw_line(_world_to_screen(exit_info.position), mouth, BLOCKED_GALLERY_COLOR, 1.5, true)
 			draw_circle(mouth, 5.5 * icon_scale, PANEL, true, -1.0, true)
-			draw_circle(mouth, 5.5 * icon_scale, Color("abbeff") if reachable else Color("ff6b65"), false, 1.5, true)
+			draw_circle(mouth, 5.5 * icon_scale, ACCESSIBLE_GALLERY_COLOR if reachable else BLOCKED_GALLERY_COLOR, false, 1.5, true)
 	var unit_screen := _world_to_screen(unit_position)
 	draw_circle(unit_screen, 7.0 * icon_scale, ORANGE)
 	draw_arc(unit_screen, 11.0 * icon_scale, 0, TAU, 16, Color("ffe2ba"), 1.4)
 	if explored_caves.has(world.entry):
 		_draw_beacon_light(_world_to_screen(world.caves[world.entry].position), icon_scale, LEVEL_EXIT_BEACON_COLOR)
-	var badge := Rect2(Vector2(view.get_center().x - 82.0, 12.0), Vector2(164.0, 38.0))
-	draw_rect(badge, PANEL)
-	draw_rect(badge, Color("1a4857"), false, 1.0)
-	draw_string(ThemeDB.fallback_font, badge.position + Vector2(0, 26), "%s · %d" % [OXIDIZED_CAVES_NAME, -current_level], HORIZONTAL_ALIGNMENT_CENTER, badge.size.x, 16, CYAN)
 
 	_draw_dropped_materials()
 	_draw_rockfall()
@@ -1139,7 +1223,7 @@ func _draw_isometric_room() -> void:
 	if mining_cave == cave.id:
 		_draw_mining_progress(cave.id)
 	if bio_scan_room == cave.id:
-		var progress: float = bio_scan_elapsed / BIO_SCAN_SECONDS[bio_scanner_tier]
+		var progress: float = bio_scan_elapsed / _bio_scan_duration(bio_scanner_tier)
 		_draw_field_progress(_world_to_screen(_bio_scan_target(cave.id, bio_scan_fauna)) - Vector2(0, 22), progress, CYAN)
 	elif not taking_field_photo:
 		if selected_flora == cave.id and analyzed_flora.has(cave.id):
@@ -1154,7 +1238,11 @@ func _draw_isometric_room_features(cave_id: int) -> void:
 			var spot := _material_marker_position(cave_id)
 			draw_set_transform(spot, 0.0, Vector2.ONE * _isometric_object_scale())
 			var vein := PackedVector2Array([Vector2(-8, 1), Vector2(-3, -2), Vector2(1, 0), Vector2(7, -3)])
-			draw_polyline(vein, Color("f6cb75"), 2.5, true)
+			var mineral_color := Color("f6cb75")
+			match _mineral_type(cave_id):
+				"quars": mineral_color = Color("cbaaf8")
+				"magnetita": mineral_color = Color("8abbdc")
+			draw_polyline(vein, mineral_color, 2.5, true)
 			draw_circle(Vector2(2, -2), 2.1, Color("fff1bd"), true, -1.0, true)
 			draw_set_transform(Vector2.ZERO)
 	if _flora_is_visible_in_room(cave_id):
@@ -1201,7 +1289,7 @@ func _draw_isometric_room_terrain(cave: Dictionary) -> void:
 			_draw_isometric_obstacle(obstacle)
 
 func _draw_room_state_badge(marker: Vector2, icon_scale: float, completed: bool, canvas: CanvasItem = self) -> void:
-	var color := Color("72e7d1") if completed else ORANGE
+	var color := Color("72e7d1") if completed else ACCESSIBLE_GALLERY_COLOR
 	canvas.draw_circle(marker, 7.5 * icon_scale, Color("0b2525") if completed else PANEL, true, -1.0, true)
 	canvas.draw_circle(marker, 7.5 * icon_scale, color, false, 1.0, true)
 	if completed:
@@ -1210,36 +1298,64 @@ func _draw_room_state_badge(marker: Vector2, icon_scale: float, completed: bool,
 		canvas.draw_string(ThemeDB.fallback_font, marker + Vector2(-8, 4) * icon_scale, "?", HORIZONTAL_ALIGNMENT_CENTER, 16 * icon_scale, maxi(7, roundi(11 * icon_scale)), color)
 
 func _draw_isometric_room_badges() -> void:
-	if room_progress_label.text == "GALERIA" or selected_cave < 0:
+	var cave_id := _hud_room_id()
+	if room_progress_label.text == "GALERIA" or cave_id < 0:
 		return
-	var cave_id := selected_cave
 	var center := Vector2(room_progress_label.size.x * 0.5, 50.0)
 	var completed := explored_caves.has(cave_id)
 	var badges: Array[String] = []
-	if show_findings and flora_sites.has(cave_id) and (completed or analyzed_flora.has(cave_id) or _flora_is_visible()):
+	if show_findings and _flora_is_visible_in_room(cave_id):
 		badges.append("flora")
-	if show_findings and fauna_sites.has(cave_id) and (completed or seen_fauna.has(cave_id)):
+	if show_findings and _fauna_is_visible_in_room(cave_id):
 		badges.append("fauna")
+	if _mineral_site_discovered(cave_id) and not collected_materials.has(cave_id):
+		badges.append("mineral")
 	if completed:
 		badges.append("completed")
-		if _has_pending_galleries(cave_id):
+		if _has_accessible_pending_galleries(cave_id):
 			badges.append("galleries")
+	for exit_info in _visible_exits_for_cave(cave_id):
+		if not _is_gallery_exit_accessible(_corridor_by_id(exit_info.corridor_id), cave_id):
+			badges.append("blocked")
+			break
 	for index in range(badges.size()):
 		var marker := center + Vector2((float(index) - (badges.size() - 1) * 0.5) * 27.0, 0)
 		match badges[index]:
 			"completed", "galleries":
 				_draw_room_state_badge(marker, 1.0, badges[index] == "completed", room_progress_label)
+			"blocked":
+				_draw_blocked_exit_badge(room_progress_label, marker, 0.75)
+			"mineral":
+				_draw_pending_mineral_badge(room_progress_label, marker)
 			"flora":
 				_draw_flora_symbol(room_progress_label, marker, 0.8, flora_species_by_room[cave_id])
 				if not analyzed_flora.has(cave_id):
 					room_progress_label.draw_string(ThemeDB.fallback_font, marker + Vector2(-13, 4), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ORANGE)
 			"fauna":
-				_draw_fauna_map_badge(room_progress_label, marker, fauna_species_by_room.get(cave_id, "escarabat"))
-				if not analyzed_fauna.has(cave_id):
+				var observed := analyzed_fauna.has(cave_id)
+				_draw_fauna_map_badge(room_progress_label, marker, fauna_species_by_room.get(cave_id, "escarabat"), 1.0, observed)
+				if not observed:
 					room_progress_label.draw_string(ThemeDB.fallback_font, marker + Vector2(-13, 4), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ORANGE)
 
+func _draw_pending_mineral_badge(canvas: CanvasItem, center: Vector2) -> void:
+	var rock := PackedVector2Array([
+		center + Vector2(-8, 2), center + Vector2(-5, -5), center + Vector2(4, -6),
+		center + Vector2(8, -1), center + Vector2(5, 5), center + Vector2(-4, 6),
+	])
+	canvas.draw_colored_polygon(rock, Color("687579"))
+	canvas.draw_polyline(PackedVector2Array([
+		center + Vector2(-6, 2), center + Vector2(-2, -2),
+		center + Vector2(1, 0), center + Vector2(6, -3),
+	]), Color("f6cb75"), 1.7, true)
+
+func _draw_blocked_exit_badge(canvas: CanvasItem, center: Vector2, marker_scale: float) -> void:
+	canvas.draw_circle(center, 10.0 * marker_scale, PANEL, true, -1.0, true)
+	canvas.draw_circle(center, 10.0 * marker_scale, BLOCKED_GALLERY_COLOR, false, 1.4, true)
+	canvas.draw_arc(center + Vector2(0, -2) * marker_scale, 3.0 * marker_scale, PI, TAU, 12, BLOCKED_GALLERY_COLOR, 1.3, true)
+	canvas.draw_rect(Rect2(center + Vector2(-4, -2) * marker_scale, Vector2(8, 7) * marker_scale), BLOCKED_GALLERY_COLOR)
+
 func _draw_mining_progress(cave_id: int) -> void:
-	var progress: float = 1.0 - mining_remaining / MINING_SECONDS[mining_tool]
+	var progress: float = 1.0 - mining_remaining / _mining_duration(mining_tool)
 	_draw_field_progress(_material_marker_position(cave_id) - Vector2(0, 16), progress, Color("ffe3a0"))
 
 func _isometric_object_scale() -> float:
@@ -1262,7 +1378,7 @@ func _has_descent_elevator(cave_id: int) -> bool:
 	return current_level >= 1 and current_level < OXIDIZED_CAVES_DEPTH and cave_id >= 0 and cave_id == descent_access and explored_caves.has(cave_id)
 
 func _draw_beacon_waves(center: Vector2, reach: float, vertical_ratio: float, color: Color) -> void:
-	var cycle_seconds := 6.4 if analysis_mode else 3.2
+	var cycle_seconds := 12.8
 	for wave in range(2):
 		var phase := fposmod(fauna_time / cycle_seconds + wave * 0.5, 1.0)
 		var radius := maxf(1.0, reach * phase)
@@ -1430,7 +1546,7 @@ func _level_access_label(cave_id: int, short: bool = false) -> String:
 	if cave_id != world.entry:
 		var depth := -(current_level + 1)
 		if _is_unopened_shaft(cave_id):
-			return "Forat · %d" % depth if short else ("BAIXA AMB L’ESCALA · %d" % depth if folding_ladders > 0 else "CAL UNA ESCALA PLEGABLE")
+			return "Forat · %d" % depth if short else ("BAIXA AMB L’ESCALA · %d" % depth if _ladder_uses_left() > 0 else "ESCALA ESGOTADA")
 		return "Nivell %d" % depth if short else "BAIXA AL NIVELL %d" % depth
 	if current_level == 1:
 		return "Base · 0" if short else "PUJA A LA BASE · 0"
@@ -1559,6 +1675,16 @@ func _get_cave_floor_texture(cave_id: int) -> Texture2D:
 	var image := Image.create(256, 256, false, Image.FORMAT_RGBA8)
 	var dark_rock := Color("352528")
 	var warm_rock := Color("68473a")
+	match _room_environment(cave_id):
+		"aigua":
+			dark_rock = Color("24363b")
+			warm_rock = Color("3d6466")
+		"gel":
+			dark_rock = Color("353b50")
+			warm_rock = Color("627f9b")
+		"calent":
+			dark_rock = Color("482522")
+			warm_rock = Color("a25332")
 	for y in range(256):
 		for x in range(256):
 			var broad_value: float = coarse.get_noise_2d(float(x), float(y))
@@ -1721,19 +1847,16 @@ func _draw_isometric_corridors(cave: Dictionary, passage_id: int) -> void:
 					for outside in Geometry2D.clip_polyline_with_polygon(segment, room_polygon):
 						if outside.size() >= 2:
 							draw_line(_world_to_screen(outside[0]), _world_to_screen(outside[1]), Color("805043", 1.0 - progress), maxf(1.2, zoom_level * 0.3), true)
-			var destination: int = corridor.b if corridor.a == cave.id else corridor.a
-			var out_of_range := not _can_enter_room_with_signal(destination, corridor.id, cave.id, false)
+			var out_of_range := not _is_gallery_exit_accessible(corridor, cave.id)
 			if out_of_range or not _gallery_was_crossed(corridor):
 				var marker := _world_to_screen(exit_info.position + exit_info.direction * 8.0)
 				draw_set_transform(marker, 0.0, Vector2.ONE * _isometric_object_scale())
-				draw_circle(Vector2.ZERO, 10.0, PANEL, true, -1.0, true)
-				var marker_color := Color("ff6b65") if out_of_range else Color("abbeff")
-				draw_circle(Vector2.ZERO, 10.0, marker_color, false, 1.4, true)
 				if out_of_range:
-					draw_arc(Vector2(0, -2), 3.0, PI, TAU, 12, marker_color, 1.3, true)
-					draw_rect(Rect2(Vector2(-4, -2), Vector2(8, 7)), marker_color)
+					_draw_blocked_exit_badge(self, Vector2.ZERO, 1.0)
 				else:
-					draw_string(ThemeDB.fallback_font, Vector2(-10, 5), "?", HORIZONTAL_ALIGNMENT_CENTER, 20, 14, marker_color)
+					draw_circle(Vector2.ZERO, 10.0, PANEL, true, -1.0, true)
+					draw_circle(Vector2.ZERO, 10.0, ACCESSIBLE_GALLERY_COLOR, false, 1.4, true)
+					draw_string(ThemeDB.fallback_font, Vector2(-10, 5), "?", HORIZONTAL_ALIGNMENT_CENTER, 20, 14, ACCESSIBLE_GALLERY_COLOR)
 				draw_set_transform(Vector2.ZERO)
 
 
@@ -1748,9 +1871,10 @@ func _draw_isometric_passage(gallery: Dictionary, points: PackedVector2Array) ->
 			screen_side.append(_world_to_screen(point))
 		draw_polyline(screen_side, Color("805043"), maxf(1.2, zoom_level * 0.3), true)
 
-func _has_pending_galleries(cave_id: int) -> bool:
-	for corridor in world.corridors:
-		if (corridor.a == cave_id or corridor.b == cave_id) and not _gallery_was_crossed(corridor):
+func _has_accessible_pending_galleries(cave_id: int) -> bool:
+	for exit_info in _visible_exits_for_cave(cave_id):
+		var corridor := _corridor_by_id(exit_info.corridor_id)
+		if not _gallery_was_crossed(corridor) and _is_gallery_exit_accessible(corridor, cave_id):
 			return true
 	return false
 
@@ -1990,6 +2114,243 @@ func _draw_isometric_explorer(position: Vector2) -> void:
 	draw_circle(screen + Vector2(0, -20) * scale, 6.0 * scale, Color("b2c5ba"))
 	draw_circle(screen + Vector2(1, -20) * scale, 2.2 * scale, CYAN)
 
+func _build_profiles_dialog() -> void:
+	profiles_dialog = AcceptDialog.new()
+	profiles_dialog.title = "Perfils i partides locals"
+	profiles_dialog.ok_button_text = "TANCA"
+	profiles_dialog.exclusive = true
+	add_child(profiles_dialog)
+	var contents := VBoxContainer.new()
+	contents.custom_minimum_size.x = 410
+	contents.add_theme_constant_override("separation", 10)
+	profiles_dialog.add_child(contents)
+	profiles_status = _add_equipment_label(contents, "", 13, CYAN)
+	profiles_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	profiles_list = OptionButton.new()
+	profiles_list.custom_minimum_size.y = 36
+	profiles_list.item_selected.connect(func(_index: int) -> void: _refresh_profile_buttons())
+	contents.add_child(profiles_list)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 8)
+	contents.add_child(actions)
+	save_profile_button = _button("DESA LA PARTIDA ACTIVA", Vector2.ZERO, Vector2(0, 34))
+	load_profile_button = _button("CARREGA EL PERFIL", Vector2.ZERO, Vector2(0, 34), true)
+	for button in [save_profile_button, load_profile_button]:
+		button.custom_minimum_size.y = 34
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		actions.add_child(button)
+	save_profile_button.pressed.connect(_manual_save_profile)
+	load_profile_button.pressed.connect(_load_selected_profile)
+	contents.add_child(HSeparator.new())
+	profile_name_input = LineEdit.new()
+	profile_name_input.placeholder_text = "Nom del perfil nou"
+	profile_name_input.max_length = 32
+	contents.add_child(profile_name_input)
+	var create_button := _button("CREA PERFIL", Vector2.ZERO, Vector2(0, 34))
+	create_button.custom_minimum_size.y = 34
+	create_button.pressed.connect(_create_local_profile)
+	contents.add_child(create_button)
+	var restart_button := _button("REINICIA LA RUN", Vector2.ZERO, Vector2(0, 34), true)
+	restart_button.custom_minimum_size.y = 34
+	restart_button.pressed.connect(_confirm_run_restart)
+	contents.add_child(restart_button)
+	restart_run_dialog = ConfirmationDialog.new()
+	restart_run_dialog.title = "Reinicia l’expedició"
+	restart_run_dialog.dialog_text = "Començaràs a la superfície, amb l’equip inicial i una llavor nova. Es perdran les descobertes, els recursos i les caixes pendents de l’expedició actual."
+	restart_run_dialog.dialog_autowrap = true
+	restart_run_dialog.ok_button_text = "REINICIA"
+	restart_run_dialog.cancel_button_text = "CANCEL·LA"
+	restart_run_dialog.exclusive = true
+	restart_run_dialog.confirmed.connect(_restart_current_run)
+	restart_run_dialog.canceled.connect(_open_profiles, CONNECT_DEFERRED)
+	add_child(restart_run_dialog)
+
+func _confirm_run_restart() -> void:
+	profiles_dialog.hide()
+	restart_run_dialog.popup_centered(Vector2i(460, 0))
+
+func _restart_current_run() -> void:
+	var previous := {}
+	if not active_profile_id.is_empty():
+		if not _save_active_profile():
+			_open_profiles()
+			profiles_status.text = "No s’ha pogut desar la partida abans de reiniciar."
+			return
+		previous = _capture_saved_game()
+	_start_run_with_new_seed()
+	if not previous.is_empty() and not _save_active_profile():
+		_restore_saved_game(previous)
+		_open_profiles()
+		profiles_status.text = "No s’ha pogut desar la run nova. S’ha recuperat l’expedició anterior."
+
+func _open_profiles() -> void:
+	_refresh_profiles_list()
+	profiles_status.text = "Perfil actiu: %s" % active_profile_name if not active_profile_id.is_empty() else "Crea un perfil per desar la partida o carrega’n un."
+	profiles_dialog.popup_centered(Vector2i(460, 0))
+
+func _refresh_profiles_list() -> void:
+	profiles_list.clear()
+	var profiles := LocalSaveStore.list_profiles()
+	var ids := profiles.keys()
+	ids.sort_custom(func(a: String, b: String) -> bool: return profiles[a].naturalnocasecmp_to(profiles[b]) < 0)
+	for id in ids:
+		var index := profiles_list.item_count
+		profiles_list.add_item(profiles[id])
+		profiles_list.set_item_metadata(index, id)
+		if id == active_profile_id:
+			profiles_list.select(index)
+	if profiles_list.selected < 0 and profiles_list.item_count > 0:
+		profiles_list.select(0)
+	_refresh_profile_buttons()
+
+func _refresh_profile_buttons() -> void:
+	save_profile_button.disabled = active_profile_id.is_empty()
+	load_profile_button.disabled = profiles_list.selected < 0
+
+func _create_local_profile() -> void:
+	var profile_name := profile_name_input.text.strip_edges()
+	if profile_name.is_empty():
+		profiles_status.text = "Escriu un nom per al perfil."
+		return
+	var id := LocalSaveStore.profile_id(profile_name)
+	if LocalSaveStore.list_profiles().has(id):
+		profiles_status.text = "Aquest perfil ja existeix. El pots carregar de la llista."
+		return
+	# The first profile adopts the current expedition. Subsequent profiles start independently.
+	if not active_profile_id.is_empty():
+		if not _save_active_profile():
+			profiles_status.text = "No s’ha pogut desar la partida activa."
+			return
+		var previous := _capture_saved_game()
+		_new_world(randi_range(0, 0x7fffffff))
+		if LocalSaveStore.write_profile(id, profile_name, _capture_saved_game()) != OK:
+			_restore_saved_game(previous)
+			profiles_status.text = "No s’ha pogut crear el perfil."
+			return
+	elif LocalSaveStore.write_profile(id, profile_name, _capture_saved_game()) != OK:
+		profiles_status.text = "No s’ha pogut crear el perfil."
+		return
+	active_profile_id = id
+	active_profile_name = profile_name
+	autosave_elapsed = 0.0
+	seed_edit.text = str(seed_value)
+	profile_name_input.clear()
+	_refresh_profiles_list()
+	profiles_status.text = "Perfil creat i partida desada: %s" % profile_name
+
+func _manual_save_profile() -> void:
+	profiles_status.text = "Partida desada: %s" % active_profile_name if _save_active_profile() else "No s’ha pogut desar la partida."
+
+func _load_selected_profile() -> void:
+	if profiles_list.selected < 0:
+		return
+	var id: String = profiles_list.get_item_metadata(profiles_list.selected)
+	var profile := LocalSaveStore.read_profile(id, _valid_saved_game)
+	if profile.is_empty():
+		profiles_status.text = "La partida no es pot carregar o té un format incompatible."
+		return
+	if not active_profile_id.is_empty() and active_profile_id != id and not _save_active_profile():
+		profiles_status.text = "No s’ha pogut desar la partida activa."
+		return
+	active_profile_id = id
+	active_profile_name = profile.name
+	autosave_elapsed = 0.0
+	profiles_dialog.hide()
+	_restore_saved_game(profile.game)
+
+func _save_active_profile() -> bool:
+	autosave_elapsed = 0.0
+	if active_profile_id.is_empty() or world.is_empty():
+		return false
+	return LocalSaveStore.write_profile(active_profile_id, active_profile_name, _capture_saved_game()) == OK
+
+func _capture_saved_game() -> Dictionary:
+	var game := {}
+	for field in SAVED_GAME_FIELDS:
+		game[field] = get(field)
+	game["level"] = _serializable_level(_level_snapshot())
+	var levels := {}
+	for depth in inactive_levels:
+		levels[depth] = _serializable_level(inactive_levels[depth])
+	game["inactive_levels"] = levels
+	var photos := {}
+	for species in field_photos:
+		var texture: Texture2D = field_photos[species]
+		photos[species] = texture.get_image().save_png_to_buffer()
+	game["photos"] = photos
+	game["death_message"] = death_dialog.dialog_text if death_dialog.visible else ""
+	game["depth_trip_target"] = depth_trip_target
+	return game.duplicate(true)
+
+func _serializable_level(state: Dictionary) -> Dictionary:
+	var stored := state.duplicate()
+	stored.erase("cave_floor_textures")
+	return stored
+
+func _valid_saved_level(state: Dictionary) -> bool:
+	for field in LEVEL_STATE_FIELDS:
+		if field == "cave_floor_textures":
+			continue
+		if not state.has(field) or typeof(state[field]) != typeof(get(field)):
+			return false
+	var saved_world: Dictionary = state.world
+	return saved_world.get("caves") is Array and not saved_world.caves.is_empty() and saved_world.get("corridors") is Array and saved_world.get("grid_size") is Vector2i and saved_world.get("walkable_mask") is PackedByteArray and saved_world.get("terrain_mask") is PackedByteArray and state.revealed_mask.size() == saved_world.terrain_mask.size()
+
+func _valid_saved_game(game: Dictionary) -> bool:
+	for field in SAVED_GAME_FIELDS:
+		if not game.has(field) or typeof(game[field]) != typeof(get(field)):
+			return false
+	if game.current_level < 0 or game.current_level > OXIDIZED_CAVES_DEPTH or not game.get("level") is Dictionary or not _valid_saved_level(game.level):
+		return false
+	if not game.get("inactive_levels") is Dictionary or not game.get("photos") is Dictionary or not game.get("death_message") is String:
+		return false
+	for state in game.inactive_levels.values():
+		if not state is Dictionary or not _valid_saved_level(state):
+			return false
+	return true
+
+func _restore_saved_game(game: Dictionary) -> void:
+	depth_trip_target = clampi(int(game.get("depth_trip_target", -1)), -1, OXIDIZED_CAVES_DEPTH)
+	for field in SAVED_GAME_FIELDS:
+		var current = get(field)
+		if current is Array or current is Dictionary:
+			current.assign(game[field])
+		else:
+			set(field, game[field])
+	inactive_levels = game.inactive_levels
+	for state in inactive_levels.values():
+		state["cave_floor_textures"] = {}
+	for field in LEVEL_STATE_FIELDS:
+		set(field, game.level.get(field, {}))
+	helmet_light_zone_lit = surface_mode or _has_ambient_light(unit_position)
+	field_photos.clear()
+	for species in game.photos:
+		var bytes = game.photos[species]
+		var picture := Image.new()
+		if bytes is PackedByteArray and picture.load_png_from_buffer(bytes) == OK:
+			field_photos[species] = ImageTexture.create_from_image(picture)
+	selected_route.assign(move_path)
+	dragging = false
+	warned_dark_movement = false
+	resource_gains.clear()
+	resource_previous_counts.clear()
+	field_action_completed_until.clear()
+	seed_edit.text = str(seed_value)
+	_update_map_stats()
+	_update_view_mode_ui()
+	_update_field_action_cards()
+	_update_beacon_status()
+	queue_redraw()
+	if not game.death_message.is_empty():
+		death_dialog.dialog_text = game.death_message
+		death_dialog.popup_centered(Vector2i(440, 0))
+	elif depth_trip_target >= 0 and not moving:
+		_continue_depth_trip.call_deferred()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and is_instance_valid(seed_edit) and not active_profile_id.is_empty():
+		_save_active_profile()
+
 func _build_ui() -> void:
 	death_dialog = AcceptDialog.new()
 	death_dialog.title = "Fi de la partida"
@@ -2007,6 +2368,10 @@ func _build_ui() -> void:
 	left.scale = Vector2.ONE * SIDE_PANEL_SCALE
 	ui_root.add_child(left)
 	_add_label(left, "SUBTERRA: MARS", 18, CYAN, Vector2(16, 12), Vector2(248, 26))
+	var profiles_button := _button("PARTIDA", Vector2(190, 12), Vector2(74, 25), true)
+	profiles_button.pressed.connect(_open_profiles)
+	left.add_child(profiles_button)
+	_build_profiles_dialog()
 	mode_heading_label = _add_label(left, "MAPA DE RECERCA   /   NIVELL -1", 10, MUTED, Vector2(16, 42), Vector2(248, 18))
 	seed_edit = LineEdit.new()
 	seed_edit.position = Vector2(16, 76)
@@ -2024,61 +2389,53 @@ func _build_ui() -> void:
 	descend_button = _button("BAIXA AL NIVELL -1", Vector2(16, 62), Vector2(248, 26))
 	descend_button.visible = false
 	descend_button.tooltip_text = "Entra pel forat d'accés fins a la xarxa de coves del nivell -1."
-	descend_button.pressed.connect(_descend_to_level_one)
+	descend_button.pressed.connect(func() -> void: _confirm_depth_action(1, _descend_to_level_one))
 	left.add_child(descend_button)
 	base_return_button = _button("TORNA A LA BASE", Vector2(16, 62), Vector2(248, 26))
 	base_return_button.visible = false
 	base_return_button.tooltip_text = "Cal tornar a la sala d'entrada del nivell -1 per pujar a la superfície."
-	base_return_button.pressed.connect(_start_return_to_base)
+	base_return_button.pressed.connect(func() -> void: _confirm_depth_action(current_level - 1, _start_return_to_base))
 	left.add_child(base_return_button)
-	base_catalog_button = _button("CATÀLEG BIOLÒGIC", Vector2(146, 96), Vector2(118, 27), true)
+	descend_navigation_button = _button("", Vector2(144, 130), Vector2(120, 30))
+	descend_navigation_button.hide()
+	descend_navigation_button.pressed.connect(func() -> void: _confirm_depth_action(current_level + 1, _start_descent_navigation))
+	left.add_child(descend_navigation_button)
+	catalogs_panel = _panel(Rect2(0, 0, 280, 136))
+	ui_root.add_child(catalogs_panel)
+	_add_label(catalogs_panel, "INVENTARI I CATÀLEGS", 11, MUTED, Vector2(12, 8), Vector2(196, 18))
+	base_catalog_button = _button("CATÀLEG BIOLÒGIC", Vector2(12, 64), Vector2(256, 27), true)
 	base_catalog_button.pressed.connect(_open_flora_catalog)
-	left.add_child(base_catalog_button)
-	base_catalog_button.size = Vector2(118, 27)
-	research_panel = _panel(Rect2(1142, 18, 280, 385))
-	ui_root.add_child(research_panel)
-	_add_label(research_panel, "RECERCA A LA BASE", 13, CYAN, Vector2(16, 12), Vector2(248, 24))
-	research_points_label = _add_label(research_panel, "", 11, MUTED, Vector2(16, 43), Vector2(248, 18))
-	scanner_upgrade_button = _button("DESCOBREIX MÉS TERRA · 1 PUNT", Vector2(16, 72), Vector2(248, 32))
-	scanner_upgrade_button.tooltip_text = "Amplia el radi de descoberta en moure’t per una sala sense escanejar."
-	scanner_upgrade_button.pressed.connect(_upgrade_scanner)
-	beacon_upgrade_button = _button("ESTÉN EL SENYAL · 1 PUNT", Vector2(16, 145), Vector2(248, 32))
-	beacon_upgrade_button.tooltip_text = "Augmenta l’abast de 650 a 900 unitats en línia recta."
-	beacon_upgrade_button.pressed.connect(_upgrade_beacon_range)
+	catalogs_panel.add_child(base_catalog_button)
 	craft_beacon_button = _button("FABRICA BALISA · 2 MATERIALS", Vector2(16, 234), Vector2(248, 32))
 	craft_beacon_button.pressed.connect(_craft_equipment.bind(true))
 	craft_oxygen_button = _button("FABRICA RESERVA D’OXIGEN · 1 MATERIAL", Vector2(16, 274), Vector2(248, 32))
-	craft_oxygen_button.tooltip_text = "Una reserva portàtil recupera fins a 5 minuts d’oxigen."
+	craft_oxygen_button.tooltip_text = "Afegeix una reserva portàtil d’oxigen."
 	craft_oxygen_button.pressed.connect(_craft_equipment.bind(false))
 	craft_suit_button = _button("VESTIT ESPACIAL REFORÇAT · 3 MATERIALS", Vector2(16, 314), Vector2(248, 32))
 	craft_suit_button.pressed.connect(_craft_reinforced_suit)
-	status_label = _add_label(left, "GENERADOR P0B · %s" % Generator.GENERATOR_VERSION, 10, Color("89b0bb"), Vector2(16, 166), Vector2(248, 30))
+	status_label = _add_label(left, "GENERADOR P0B · %s" % Generator.GENERATOR_VERSION, 10, Color("89b0bb"), Vector2(16, 100), Vector2(248, 30))
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_add_label(left, "PROFUNDITAT", 11, MUTED, Vector2(16, 202), Vector2(248, 18))
-	depth_diagram = Control.new()
-	depth_diagram.position = Vector2(16, 220)
-	depth_diagram.size = Vector2(248, 112)
-	depth_diagram.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	depth_diagram.draw.connect(_draw_depth_diagram)
-	left.add_child(depth_diagram)
-	var inventory_button := _button("INVENTARI", Vector2(16, 96), Vector2(118, 27), true)
+	_add_label(left, "PROFUNDITAT", 11, MUTED, Vector2(16, 138), Vector2(248, 18))
+	_build_depth_selector(left)
+	var inventory_button := _button("INVENTARI", Vector2(12, 30), Vector2(256, 27), true)
 	inventory_button.pressed.connect(_open_inventory.bind(false))
-	left.add_child(inventory_button)
-	var equipment_catalog_button := _button("CATÀLEG D’EQUIP I MILLORES", Vector2(16, 130), Vector2(248, 27), true)
+	catalogs_panel.add_child(inventory_button)
+	var equipment_catalog_button := _button("EQUIP I MILLORES", Vector2(12, 98), Vector2(256, 27), true)
 	equipment_catalog_button.pressed.connect(_open_inventory.bind(true))
-	left.add_child(equipment_catalog_button)
+	catalogs_panel.add_child(equipment_catalog_button)
 	_build_inventory_and_workshop()
 
-	level_panel = _panel(Rect2(0, 18, 280, 248))
+	level_panel = _panel(Rect2(0, 18, 280, 132))
 	level_panel.position = Vector2(1142, 18)
 	ui_root.add_child(level_panel)
 	level_panel.get_child(0).hide()
-	for bounds in [Rect2(0, 0, 280, 54), Rect2(0, 64, 280, 106), Rect2(0, 180, 280, 68)]:
-		_add_section_frame(level_panel, bounds)
+	_add_section_frame(level_panel, Rect2(0, 0, 280, 54))
 	_add_label(level_panel, "SALES ESCANEJADES", 10, MUTED, Vector2(16, 9), Vector2(115, 18))
 	cave_count_label = _add_label(level_panel, "01", 19, Color("dcecf0"), Vector2(16, 23), Vector2(95, 28))
-	access_heading_label = _add_label(level_panel, "SORTIDES", 10, MUTED, Vector2(140, 9), Vector2(105, 18))
-	exit_count_label = _add_label(level_panel, "00", 19, ORANGE, Vector2(140, 23), Vector2(95, 28))
+	_add_label(level_panel, "SORTIDES", 10, ACCESSIBLE_GALLERY_COLOR, Vector2(121, 9), Vector2(65, 18))
+	exit_count_label = _add_label(level_panel, "0", 19, ACCESSIBLE_GALLERY_COLOR, Vector2(121, 23), Vector2(65, 28))
+	_add_label(level_panel, "BLOQUEJADES", 10, BLOCKED_GALLERY_COLOR, Vector2(185, 9), Vector2(85, 18))
+	blocked_exit_count_label = _add_label(level_panel, "0", 19, BLOCKED_GALLERY_COLOR, Vector2(185, 23), Vector2(85, 28))
 	map_options_window = AcceptDialog.new()
 	map_options_window.title = "Opcions del mapa"
 	add_child(map_options_window)
@@ -2122,58 +2479,61 @@ func _build_ui() -> void:
 	findings_toggle.button_pressed = show_findings
 	findings_toggle.toggled.connect(_on_overlay_toggled.bind("findings"))
 	map_options_content.add_child(findings_toggle)
-	_add_label(level_panel, "NAVEGACIÓ", 11, MUTED, Vector2(16, 72), Vector2(248, 18))
-	var focus_button := _button("INSPECCIONA", Vector2(16, 94), Vector2(120, 30))
-	focus_button.pressed.connect(_focus_selected_cave)
-	level_panel.add_child(focus_button)
-	var fit_map_button := _button("ENQUADRA EL MAPA", Vector2(144, 94), Vector2(120, 30), true)
+	inspect_room_button = _button("INSPECCIONA", Vector2(16, 94), Vector2(120, 30))
+	inspect_room_button.pressed.connect(_focus_selected_cave)
+	inspect_room_button.tooltip_text = "Obre la sala on és l’explorador en vista isomètrica."
+	fit_map_button = _button("ENQUADRA EL MAPA", Vector2.ZERO, Vector2(172, 30), true)
 	fit_map_button.pressed.connect(_fit_discovered_map)
-	level_panel.add_child(fit_map_button)
-	map_legend_window = AcceptDialog.new()
-	map_legend_window.title = "Llegenda del mapa"
-	add_child(map_legend_window)
+	map_legend_panel = _panel(Rect2(0, 0, 280, 322))
+	ui_root.add_child(map_legend_panel)
+	_add_label(map_legend_panel, "LLEGENDA DEL MAPA", 12, CYAN, Vector2(16, 8), Vector2(248, 20))
 	var legend_content := Control.new()
-	legend_content.custom_minimum_size = Vector2(340, 340)
-	map_legend_window.add_child(legend_content)
-	_add_label(level_panel, "MAPA", 11, MUTED, Vector2(16, 188), Vector2(248, 18))
-	var legend_button := _button("LLEGENDA", Vector2(16, 208), Vector2(120, 30), true)
-	legend_button.pressed.connect(func() -> void: map_legend_window.popup_centered())
-	level_panel.add_child(legend_button)
-	var options_button := _button("OPCIONS", Vector2(144, 208), Vector2(120, 30), true)
+	legend_content.position.y = 24
+	legend_content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	map_legend_panel.add_child(legend_content)
+	map_options_section = _panel(Rect2(0, 64, 280, 68))
+	level_panel.add_child(map_options_section)
+	_add_label(map_options_section, "MAPA", 11, MUTED, Vector2(16, 8), Vector2(248, 18))
+	var options_button := _button("OPCIONS", Vector2(16, 28), Vector2(248, 30), true)
 	options_button.pressed.connect(func() -> void: map_options_window.popup_centered())
-	level_panel.add_child(options_button)
+	map_options_section.add_child(options_button)
 	var legend_icons := Control.new()
 	legend_icons.position = Vector2(16, 12)
 	legend_icons.size = Vector2(20, 320)
 	legend_icons.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	legend_icons.draw.connect(func() -> void:
-		var scanned := Vector2(9, 9)
-		legend_icons.draw_circle(scanned, 7.5, Color("72e7d1"), false, 1.0, true)
-		legend_icons.draw_polyline(PackedVector2Array([scanned + Vector2(-3, 0), scanned + Vector2(-1, 2), scanned + Vector2(3, -2)]), Color("72e7d1"), 1.6, true)
-		legend_icons.draw_circle(Vector2(9, 36), 7.5, ORANGE, false, 1.0, true)
-		legend_icons.draw_string(ThemeDB.fallback_font, Vector2(1, 40), "?", HORIZONTAL_ALIGNMENT_CENTER, 16, 11, ORANGE)
-		_draw_flora_symbol(legend_icons, Vector2(9, 69), 0.85)
-		legend_icons.draw_circle(Vector2(9, 90), 5.0, ORANGE)
-		legend_icons.draw_circle(Vector2(9, 90), 8.0, Color("ffe2ba"), false, 1.4, true)
-		legend_icons.draw_circle(Vector2(9, 117), 5.0, ORANGE)
-		legend_icons.draw_circle(Vector2(9, 117), 8.5, Color(ORANGE, 0.25), false, 1.2, true)
-		_draw_fauna_map_badge(legend_icons, Vector2(9, 144))
-		legend_icons.draw_rect(Rect2(1, 166, 17, 10), Color("285571"))
-		legend_icons.draw_circle(Vector2(9, 198), 5.5, Color("abbeff"), false, 1.5, true)
-		legend_icons.draw_circle(Vector2(9, 225), 5.5, Color("ff6b65"), false, 1.5, true)
-		legend_icons.draw_colored_polygon(PackedVector2Array([Vector2(9, 246), Vector2(15, 252), Vector2(9, 258), Vector2(3, 252)]), Color("abbeff"))
-		_draw_elevator_icon(legend_icons, Vector2(6, 279), false, 0.72)
-		_draw_elevator_icon(legend_icons, Vector2(19, 279), true, 0.72))
+		var explorer := Vector2(9, 9)
+		legend_icons.draw_circle(explorer, 5.0, ORANGE)
+		legend_icons.draw_circle(explorer, 8.0, Color("ffe2ba"), false, 1.4, true)
+		_draw_room_state_badge(Vector2(9, 32), 1.0, true, legend_icons)
+		var entrance := Vector2(9, 55)
+		legend_icons.draw_circle(entrance, 5.0, ORANGE)
+		legend_icons.draw_circle(entrance, 8.5, Color(ORANGE, 0.25), false, 1.2, true)
+		_draw_elevator_icon(legend_icons, Vector2(6, 78), false, 0.72)
+		_draw_elevator_icon(legend_icons, Vector2(19, 78), true, 0.72)
+		legend_icons.draw_circle(Vector2(4, 113), 4.0, ACCESSIBLE_GALLERY_COLOR, false, 1.3, true)
+		_draw_room_state_badge(Vector2(19, 113), 0.9, false, legend_icons)
+		legend_icons.draw_circle(Vector2(4, 136), 4.0, BLOCKED_GALLERY_COLOR, false, 1.3, true)
+		_draw_blocked_exit_badge(legend_icons, Vector2(19, 136), 0.68)
+		_draw_flora_symbol(legend_icons, Vector2(9, 171), 0.85)
+		_draw_fauna_map_badge(legend_icons, Vector2(9, 194), "escarabat", 1.0, false)
+		_draw_pending_mineral_badge(legend_icons, Vector2(9, 217))
+		legend_icons.draw_rect(Rect2(1, 247, 17, 10), Color("285571"))
+		legend_icons.draw_colored_polygon(PackedVector2Array([Vector2(9, 269), Vector2(15, 275), Vector2(9, 281), Vector2(3, 275)]), Color("abbeff"))
+		for divider_y in [95.5, 153.5, 234.5]:
+			legend_icons.draw_line(Vector2(0, divider_y), Vector2(248, divider_y), Color("1a4857")))
 	legend_content.add_child(legend_icons)
-	var legend_labels := ["Sala escanejada", "Galeries pendents de recórrer", "Flora · ! pendent d’analitzar", "Explorador", "Sala d’entrada · accés a la base", "Fauna · ! pendent d’observar", "Galeria amb cobertura", "Sortida nova accessible", "Sortida fora d’abast", "Balisa instal·lada", "Ascensor · pujada o baixada"]
+	var legend_labels := [
+		"Explorador", "Sala escanejada", "Sala d’entrada · accés a la base", "Ascensor · pujada o baixada",
+		"Sortida accessible pendent de recórrer", "Sortida fora d’abast",
+		"Flora · ! pendent d’analitzar", "Fauna · ! pendent d’observar", "Veta de mineral pendent de minar",
+		"Galeria amb cobertura", "Balisa instal·lada",
+	]
+	var legend_row_centers := [9, 32, 55, 78, 113, 136, 171, 194, 217, 252, 275]
 	for index in range(legend_labels.size()):
-		_add_label(legend_content, legend_labels[index], 12, Color("dcecf0"), Vector2(43, 12 + index * 27), Vector2(270, 20))
+		_add_label(legend_content, legend_labels[index], 12, Color("dcecf0"), Vector2(43, legend_row_centers[index] + 2), Vector2(221, 20))
 	_build_level_progress_strip()
 
-	bottom_panel = _panel(Rect2(0, 0, 666, 62))
-	ui_root.add_child(bottom_panel)
-	_add_label(bottom_panel, "Clic dret per moure’t · Clic esquerre per inspeccionar", 11, Color("dcecf0"), Vector2(16, 10), Vector2(470, 18))
-	_add_label(bottom_panel, "Roda per fer zoom · Espai i arrossega per moure el mapa", 10, MUTED, Vector2(16, 34), Vector2(470, 18))
 	equipment_bar = PanelContainer.new()
 	equipment_bar.custom_minimum_size = Vector2(1660, 150)
 	equipment_bar.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
@@ -2181,22 +2541,27 @@ func _build_ui() -> void:
 	var groups := HBoxContainer.new()
 	groups.add_theme_constant_override("separation", 16)
 	equipment_bar.add_child(groups)
-	inventory_strip_values.resize(STRIP_HEALTH_SLOT + 1)
-	_add_inventory_strip_group(groups, "RECURSOS", [0, 10, 6])
-	_add_inventory_strip_group(groups, "EQUIP", [STRIP_HEALTH_SLOT, STRIP_OXYGEN_SLOT, 4, 9, 5, 3, STRIP_BIO_SCANNER_SLOT, 1, STRIP_LADDER_SLOT])
+	inventory_strip_values.resize(STRIP_MEDKIT_SLOT + 1)
+	_add_inventory_strip_group(groups, "RECURSOS", [0, STRIP_QUARTZ_SLOT, STRIP_MAGNETITE_SLOT, 6])
+	_add_inventory_strip_group(groups, "EQUIP", [STRIP_HEALTH_SLOT, STRIP_OXYGEN_SLOT, 4, 9, 5, 3, STRIP_BIO_SCANNER_SLOT, 1, STRIP_LADDER_SLOT, 10, STRIP_MEDKIT_SLOT])
 	_add_inventory_strip_group(groups, "RECERCA", [7, 8])
-	analysis_tools_panel = _panel(Rect2(0, 18, 220, 389))
-	ui_root.add_child(analysis_tools_panel)
-	analysis_tools_panel.get_child(0).hide()
-	analysis_tools_panel.add_child(map_return_button)
+
+	navigation_panel = _panel(Rect2(0, 0, 620, 48))
+	ui_root.add_child(navigation_panel)
+	navigation_panel.add_child(inspect_room_button)
+	navigation_panel.add_child(fit_map_button)
+	var navigation_heading := _add_label(navigation_panel, "NAVEGACIÓ", 11, MUTED, Vector2(12, 0), Vector2(82, 48))
+	navigation_heading.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	navigation_panel.add_child(map_return_button)
 	map_return_button.text = "VES AL MAPA"
 	map_return_button.position.x = 12.0
 	map_return_button.size = Vector2(196, 30)
 	center_explorer_button = _button("CENTRA L’EXPLORADOR", Vector2(12, 0), Vector2(196, 30), true)
 	center_explorer_button.pressed.connect(_center_isometric_explorer)
-	analysis_tools_panel.add_child(center_explorer_button)
-	_add_section_frame(analysis_tools_panel, Rect2(0, 0, 220, 66))
-	room_progress_label = _add_label(analysis_tools_panel, "", 17, CYAN, Vector2(12, 0), Vector2(196, 42))
+	navigation_panel.add_child(center_explorer_button)
+	level_title_label = _add_label(ui_root, "", 21, CYAN, Vector2.ZERO, Vector2(480, 32))
+	level_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	room_progress_label = _add_label(ui_root, "", 17, CYAN, Vector2.ZERO, Vector2(380, 38))
 	room_progress_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	room_progress_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	room_progress_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2222,10 +2587,23 @@ func _build_ui() -> void:
 	bio_action_bar.add_child(collect_flora_button)
 	collect_flora_button.pressed.connect(_collect_flora_sample)
 	lower_level_button = _button("BAIXA AL NIVELL -2", Vector2(12, 382), Vector2(196, 30))
-	lower_level_button.pressed.connect(_use_selected_level_access)
-	analysis_tools_panel.add_child(lower_level_button)
+	lower_level_button.pressed.connect(func() -> void:
+		var destination: int = current_level - 1 if selected_cave == world.entry else current_level + 1
+		_confirm_depth_action(destination, _use_selected_level_access))
+	navigation_panel.add_child(lower_level_button)
+	var navigation_idle := StyleBoxFlat.new()
+	navigation_idle.bg_color = Color("173244")
+	navigation_idle.set_corner_radius_all(4)
+	var navigation_hover := navigation_idle.duplicate() as StyleBoxFlat
+	navigation_hover.bg_color = CYAN
+	for button in [map_return_button, inspect_room_button, fit_map_button, center_explorer_button, base_return_button, descend_navigation_button, lower_level_button]:
+		button.add_theme_stylebox_override("normal", navigation_idle)
+		button.add_theme_stylebox_override("hover", navigation_hover)
+		button.add_theme_stylebox_override("pressed", navigation_hover)
+		button.add_theme_color_override("font_color", Color("dcecf0"))
+		button.add_theme_color_override("font_hover_color", Color("06212a"))
+		button.add_theme_color_override("font_pressed_color", Color("06212a"))
 	lower_level_button.hide()
-	room_navigation_heading = _add_label(analysis_tools_panel, "NAVEGACIÓ", 11, MUTED, Vector2(12, 0), Vector2(196, 18))
 	use_repair_kit_button = _add_inventory_card_action(resource_gain_cards[10], _open_field_repair_menu)
 	use_repair_kit_button.tooltip_text = "Obre la caixa d’eines"
 	field_repair_menu = PopupMenu.new()
@@ -2235,7 +2613,6 @@ func _build_ui() -> void:
 	field_repair_menu.add_item("Repara l’escàner biològic", FieldRepair.BIO_SCANNER)
 	field_repair_menu.id_pressed.connect(_apply_field_repair)
 	add_child(field_repair_menu)
-	room_section_frames[room_navigation_heading] = _add_section_frame(analysis_tools_panel, Rect2())
 	flora_catalog = AcceptDialog.new()
 	flora_catalog.title = "CATÀLEG DE L’EXPEDICIÓ"
 	add_child(flora_catalog)
@@ -2254,15 +2631,17 @@ func _build_ui() -> void:
 	catalog_grid.add_theme_constant_override("h_separation", 8)
 	catalog_grid.add_theme_constant_override("v_separation", 8)
 	scroll.add_child(catalog_grid)
-	analysis_tools_panel.visible = false
+	navigation_panel.hide()
 	equipment_action_buttons.assign([field_camera_button, collect_flora_button, oxygen_reserve_card_button,
-		helmet_battery_card_button, medkit_button, beacon_card_button, use_repair_kit_button])
+		helmet_battery_card_button, medkit_button, beacon_card_button])
 	for button in equipment_action_buttons:
 		button.draw.connect(_draw_equipment_action_pulse.bind(button))
 
 func _update_equipment_action_pulses() -> void:
 	for button in equipment_action_buttons:
 		var available := button.is_visible_in_tree() and not button.disabled
+		if button == beacon_card_button and beacon_signal_meter.value > 0.0:
+			available = false
 		if available:
 			pulsing_equipment_actions[button] = true
 			button.queue_redraw()
@@ -2305,9 +2684,11 @@ func _new_equipment_icon_button(icon: String) -> Button:
 func _build_inventory_and_workshop() -> void:
 	inventory_window = AcceptDialog.new()
 	inventory_window.title = "EQUIP DE L’EXPEDICIÓ"
+	inventory_window.ok_button_text = "TANCA"
 	add_child(inventory_window)
 	inventory_tabs = TabContainer.new()
 	inventory_window.add_child(inventory_tabs)
+	inventory_tabs.tab_changed.connect(_resize_inventory_tab)
 	var pack := MarginContainer.new()
 	pack.name = "Inventari"
 	for side in ["left", "right", "top", "bottom"]:
@@ -2319,71 +2700,200 @@ func _build_inventory_and_workshop() -> void:
 	grid.add_theme_constant_override("h_separation", 8)
 	grid.add_theme_constant_override("v_separation", 8)
 	pack.add_child(grid)
-	for title in INVENTORY_TITLES:
-		inventory_values.append(_add_inventory_slot(grid, title))
-	var workshop := VBoxContainer.new()
-	workshop.name = "Equip i millores"
-	workshop.add_theme_constant_override("separation", 6)
-	inventory_tabs.add_child(workshop)
-	workshop_balance = Label.new()
-	workshop_balance.add_theme_color_override("font_color", CYAN)
-	workshop.add_child(workshop_balance)
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(454, 400)
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	workshop.add_child(scroll)
-	var offers := GridContainer.new()
-	offers.columns = 2
-	offers.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	offers.add_theme_constant_override("h_separation", 8)
-	offers.add_theme_constant_override("v_separation", 8)
-	scroll.add_child(offers)
-	refill_oxygen_button = _button("RECARREGA · %d MATERIALS" % OXYGEN_REFILL_COST, Vector2.ZERO, Vector2.ZERO)
+	for title in ["Botes", "Escàner biològic", "Vestit espacial", "Eina de mineria"]:
+		_add_inventory_item(grid, title)
+	for supply_id: String in SUPPLY_UPGRADES:
+		_add_inventory_item(grid, SUPPLY_UPGRADES[supply_id][0])
+	var workshop_view := ScrollContainer.new()
+	workshop_view.name = "Equip i millores"
+	workshop_view.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	inventory_tabs.add_child(workshop_view)
+	var workshop := HBoxContainer.new()
+	workshop.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	workshop.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	workshop.add_theme_constant_override("separation", 16)
+	workshop_view.add_child(workshop)
+	workshop_materials_balance = Label.new()
+	var materials := _add_workshop_section(workshop, "Materials", workshop_materials_balance, 4.0, ORANGE)
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 12)
+	materials.add_child(columns)
+	var supplies := _add_workshop_column(columns, "Subministraments", 2)
+	var repairs := _add_workshop_column(columns, "Reparacions")
+	var upgrades := _add_workshop_column(columns, "Millores d’equipament")
+	refill_oxygen_button = _button("RECARREGA · %d DE FERRO" % OXYGEN_REFILL_COST, Vector2.ZERO, Vector2.ZERO)
 	refill_oxygen_button.pressed.connect(_refill_oxygen_at_base)
-	_add_workshop_offer(offers, "Dipòsit d’oxigen", "Omple el dipòsit fins al 100%.", refill_oxygen_button)
-	repair_suit_button = _button("REPARA · %d MATERIAL" % SUIT_REPAIR_COST, Vector2.ZERO, Vector2.ZERO)
+	_add_supply_offer(supplies, "oxygen_tank", refill_oxygen_button)
+	repair_suit_button = _button("REPARA · %d DE FERRO" % SUIT_REPAIR_COST, Vector2.ZERO, Vector2.ZERO)
 	repair_suit_button.pressed.connect(_repair_suit_at_base)
-	_add_workshop_offer(offers, "Reparació del vestit", "Restaura la integritat al 100%.", repair_suit_button)
-	repair_mining_tool_button = _button("REPARA · %d MATERIAL" % MINING_REPAIR_COST, Vector2.ZERO, Vector2.ZERO)
+	_add_workshop_offer(repairs, "Reparació del vestit", "Restaura la integritat al 100%.", repair_suit_button)
+	repair_mining_tool_button = _button("REPARA · %d DE FERRO" % MINING_REPAIR_COST, Vector2.ZERO, Vector2.ZERO)
 	repair_mining_tool_button.pressed.connect(_repair_mining_tool_at_base)
-	_add_workshop_offer(offers, "Reparació d’eina de mineria", "Restaura l’estat de l’eina al 100%.", repair_mining_tool_button)
-	buy_helmet_battery_button = _button("COMPRA · %d MATERIAL" % HELMET_BATTERY_COST, Vector2.ZERO, Vector2.ZERO)
+	_add_workshop_offer(repairs, "Reparació d’eina de mineria", "Restaura l’estat de l’eina al 100%.", repair_mining_tool_button)
+	buy_helmet_battery_button = _button("COMPRA · %d DE FERRO" % HELMET_BATTERY_COST, Vector2.ZERO, Vector2.ZERO)
 	buy_helmet_battery_button.pressed.connect(_buy_helmet_battery)
-	_add_workshop_offer(offers, "Bateria del casc", "Substitueix la bateria esgotada\no afegeix un recanvi.", buy_helmet_battery_button)
+	_add_supply_offer(supplies, "helmet_light", buy_helmet_battery_button)
 	mining_tool_button = _button("", Vector2.ZERO, Vector2.ZERO)
 	mining_tool_button.pressed.connect(_buy_mining_tool)
-	_add_workshop_offer(offers, "Radi de descoberta", "De 3 a 4 cel·les en explorar a peu.", scanner_upgrade_button)
-	_add_workshop_offer(offers, "Abast del senyal", "De 650 a 900 unitats\nper a la base i les balises.", beacon_upgrade_button)
-	_add_workshop_offer(offers, "Balisa", "Afegeix una balisa a l’inventari.", craft_beacon_button)
-	_add_workshop_offer(offers, "Reserva d’oxigen", "Recupera fins a 5 minuts d’oxigen.", craft_oxygen_button)
-	_add_workshop_offer(offers, "Vestit espacial reforçat", "Redueix el desgast per pressió un 60%.", craft_suit_button)
-	mining_offer = _add_workshop_offer(offers, "Eina de mineria", "", mining_tool_button)
+	_add_supply_offer(supplies, "beacon", craft_beacon_button)
+	_add_supply_offer(supplies, "oxygen_reserve", craft_oxygen_button)
+	suit_upgrade_offer = _add_workshop_offer(upgrades, "Vestit espacial", "", craft_suit_button)
+	mining_offer = _add_workshop_offer(upgrades, "Eina de mineria", "", mining_tool_button)
 	boots_button = _button("", Vector2.ZERO, Vector2.ZERO)
 	boots_button.pressed.connect(_buy_boots)
-	boots_offer = _add_workshop_offer(offers, "Botes d’exploració", "", boots_button)
-	repair_boots_button = _button("REPARA · %d MATERIAL" % BOOT_REPAIR_COST, Vector2.ZERO, Vector2.ZERO)
+	boots_offer = _add_workshop_offer(upgrades, "Botes d’exploració", "", boots_button)
+	repair_boots_button = _button("REPARA · %d DE FERRO" % BOOT_REPAIR_COST, Vector2.ZERO, Vector2.ZERO)
 	repair_boots_button.pressed.connect(_repair_boots_at_base)
-	_add_workshop_offer(offers, "Reparació de les botes", "Recupera l’estat i la velocitat.", repair_boots_button)
-	buy_repair_kit_button = _button("COMPRA · %d MATERIALS" % REPAIR_KIT_COST, Vector2.ZERO, Vector2.ZERO)
+	_add_workshop_offer(repairs, "Reparació de les botes", "Recupera l’estat i la velocitat.", repair_boots_button)
+	buy_repair_kit_button = _button("REPOSA 1 ÚS · %d DE FERRO" % REPAIR_KIT_COST, Vector2.ZERO, Vector2.ZERO)
 	buy_repair_kit_button.pressed.connect(_buy_repair_kit)
-	_add_workshop_offer(offers, "Caixa d’eines", "Recupera 30 punts d’estat\nd’una peça al camp.", buy_repair_kit_button)
-	buy_medkit_button = _button("COMPRA · %d MATERIALS" % MEDKIT_COST, Vector2.ZERO, Vector2.ZERO)
+	_add_supply_offer(supplies, "repair_kit", buy_repair_kit_button)
+	buy_medkit_button = _button("COMPRA · %d DE FERRO" % MEDKIT_COST, Vector2.ZERO, Vector2.ZERO)
 	buy_medkit_button.pressed.connect(_buy_medkit)
-	_add_workshop_offer(offers, "Farmaciola", "Recupera 35 punts de vida.", buy_medkit_button)
-	buy_folding_ladder_button = _button("COMPRA · %d MATERIALS" % FOLDING_LADDER_COST, Vector2.ZERO, Vector2.ZERO)
-	buy_folding_ladder_button.pressed.connect(_buy_folding_ladder)
-	_add_workshop_offer(offers, "Escala plegable", "Necessària per al primer descens\nper un accés inferior nou.", buy_folding_ladder_button)
+	_add_supply_offer(supplies, "medkit", buy_medkit_button)
+	repair_folding_ladder_button = _button("REPARA · %d DE FERRO" % FOLDING_LADDER_REPAIR_COST, Vector2.ZERO, Vector2.ZERO)
+	repair_folding_ladder_button.pressed.connect(_repair_folding_ladder)
+	_add_supply_offer(supplies, "ladder", repair_folding_ladder_button)
 	upgrade_bio_scanner_button = _button("", Vector2.ZERO, Vector2.ZERO)
 	upgrade_bio_scanner_button.pressed.connect(_upgrade_bio_scanner)
-	_add_workshop_offer(offers, "Escàner biològic avançat", "Escaneja en 3 s\ni es desgasta la meitat.", upgrade_bio_scanner_button)
-	repair_bio_scanner_button = _button("REPARA · %d MATERIAL" % BIO_SCANNER_REPAIR_COST, Vector2.ZERO, Vector2.ZERO)
+	scanner_upgrade_offer = _add_workshop_offer(upgrades, "Escàner biològic", "", upgrade_bio_scanner_button)
+	repair_bio_scanner_button = _button("REPARA · %d DE FERRO" % BIO_SCANNER_REPAIR_COST, Vector2.ZERO, Vector2.ZERO)
 	repair_bio_scanner_button.pressed.connect(_repair_bio_scanner)
-	_add_workshop_offer(offers, "Reparació de l’escàner", "Restaura l’estat al 100%.", repair_bio_scanner_button)
-	research_panel.size.y = 124
-	var open_workshop := _button("OBRE EL TALLER", Vector2(16, 72), Vector2(248, 32))
-	open_workshop.pressed.connect(_open_inventory.bind(true))
-	research_panel.add_child(open_workshop)
+	_add_workshop_offer(repairs, "Reparació de l’escàner", "Restaura l’estat al 100%.", repair_bio_scanner_button)
+	_add_equipment_modifiers(boots_offer, "botes")
+	_add_equipment_modifiers(suit_upgrade_offer, "vestit")
+	_add_equipment_modifiers(mining_offer, "mineria")
+	_add_equipment_modifiers(scanner_upgrade_offer, "escaner")
+
+func _add_equipment_modifiers(offer: Label, slot: String) -> void:
+	var contents := offer.get_parent() as VBoxContainer
+	contents.add_child(HSeparator.new())
+	_add_equipment_label(contents, "Modificadors", 11, MUTED)
+	for id: String in EQUIPMENT_MODIFIERS:
+		var data: Array = EQUIPMENT_MODIFIERS[id]
+		if data[0] != slot:
+			continue
+		var button := _button("", Vector2.ZERO, Vector2.ZERO, true)
+		button.custom_minimum_size.y = 36.0
+		button.pressed.connect(_apply_equipment_modifier.bind(id))
+		modifier_buttons[id] = button
+		contents.add_child(button)
+
+func _apply_equipment_modifier(id: String) -> void:
+	if not surface_mode:
+		return
+	if not owned_modifiers.has(id):
+		if not _can_upgrade_equipment(MODIFIER_MATERIAL_COST, MODIFIER_RESEARCH_COST):
+			return
+		materials_in_pack -= MODIFIER_MATERIAL_COST
+		equipment_research_spent += MODIFIER_RESEARCH_COST
+		owned_modifiers[id] = true
+	var slot: String = EQUIPMENT_MODIFIERS[id][0]
+	if equipped_modifiers.get(slot, "") == id:
+		equipped_modifiers.erase(slot)
+	else:
+		equipped_modifiers[slot] = id
+	_update_research_panel()
+
+func _modifier_protects(slot: String, condition: String) -> bool:
+	if not equipped_modifiers.has(slot):
+		return false
+	return EQUIPMENT_MODIFIERS[equipped_modifiers[slot]][3] == condition
+
+func _room_environment(cave_id: int) -> String:
+	if current_level < 2 or cave_id < 0 or cave_id == world.entry or cave_id == descent_access:
+		return ""
+	var roll := posmod(hash([seed_value, current_level, cave_id, "oxidized_environment_v1"]), 12)
+	if roll < 2:
+		return "aigua"
+	if roll < 4:
+		return "gel"
+	return "calent" if current_level == 3 and roll < 6 else ""
+
+func _boots_wear_per_unit() -> float:
+	var terrain := _room_environment(_cave_at_position(unit_position))
+	if _modifier_protects("botes", terrain):
+		return BOOT_WEAR_PER_UNIT
+	return BOOT_WEAR_PER_UNIT * (1.8 if terrain == "calent" else (1.4 if terrain == "gel" else 1.0))
+
+func _mineral_type(cave_id: int) -> String:
+	return mineral_types.get(cave_id, "ferro")
+
+func _assign_mineral_types(level: int) -> void:
+	mineral_types.clear()
+	if level < 2:
+		return
+	var candidates: Array[int] = []
+	for cave_id: int in material_sites:
+		if cave_id != world.entry and cave_id != descent_access:
+			candidates.append(cave_id)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([seed_value, "oxidized_minerals_v2"])
+	for mineral in ["quars", "magnetita"]:
+		for index in range(2):
+			if candidates.is_empty():
+				return
+			var chosen := rng.randi_range(0, candidates.size() - 1)
+			mineral_types[candidates[chosen]] = mineral
+			candidates.remove_at(chosen)
+
+func _can_detect_species(species: String) -> bool:
+	return species not in ["molsa_ferrica", "escarabat_ferric"] or _modifier_protects("escaner", "ferric")
+
+func _add_supply_offer(grid: GridContainer, supply_id: String, replenish: Button) -> void:
+	var detail := _add_workshop_offer(grid, SUPPLY_UPGRADES[supply_id][0], "", replenish)
+	var action := _button("", Vector2.ZERO, Vector2.ZERO)
+	action.custom_minimum_size.y = 28
+	action.pressed.connect(_upgrade_supply.bind(supply_id))
+	detail.get_parent().add_child(action)
+	supply_upgrade_buttons[supply_id] = action
+	supply_upgrade_offers[supply_id] = detail
+
+func _add_workshop_section(parent: HBoxContainer, title: String, balance: Label, width_ratio: float, accent: Color) -> VBoxContainer:
+	var section := PanelContainer.new()
+	section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	section.size_flags_stretch_ratio = width_ratio
+	var style := _section_style()
+	style.set_content_margin_all(12)
+	section.add_theme_stylebox_override("panel", style)
+	parent.add_child(section)
+	var contents := VBoxContainer.new()
+	contents.add_theme_constant_override("separation", 10)
+	section.add_child(contents)
+	var heading := _add_equipment_label(contents, title, 20, accent)
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	balance.add_theme_color_override("font_color", Color("b4ccd2"))
+	contents.add_child(balance)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.custom_minimum_size.y = 300.0
+	scroll.custom_minimum_size.x = 860.0 if width_ratio > 1.0 else 216.0
+	contents.add_child(scroll)
+	var sections := VBoxContainer.new()
+	sections.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sections.add_theme_constant_override("separation", 10)
+	scroll.add_child(sections)
+	return sections
+
+func _add_workshop_column(parent: HBoxContainer, title: String, columns: int = 1) -> GridContainer:
+	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_theme_constant_override("separation", 10)
+	parent.add_child(column)
+	return _add_workshop_grid(column, title, columns)
+
+func _add_workshop_grid(parent: VBoxContainer, title: String, columns: int) -> GridContainer:
+	if not title.is_empty():
+		var heading := _add_equipment_label(parent, title, 15, Color("dcecf0"))
+		heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	var grid := GridContainer.new()
+	grid.columns = columns
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_theme_constant_override("h_separation", 8)
+	grid.add_theme_constant_override("v_separation", 8)
+	parent.add_child(grid)
+	return grid
 
 func _add_inventory_strip_group(groups: HBoxContainer, title: String, slots: Array[int]) -> void:
 	var section := PanelContainer.new()
@@ -2400,9 +2910,9 @@ func _add_inventory_strip_group(groups: HBoxContainer, title: String, slots: Arr
 	cards.columns = slots.size()
 	cards.add_theme_constant_override("h_separation", 6)
 	group.add_child(cards)
-	var meter_colors := {STRIP_HEALTH_SLOT: Color("f07779"), STRIP_OXYGEN_SLOT: CYAN, 4: Color("abbeff"), 5: Color("ffd48a"), 3: Color("b6d79a"), 9: Color("d7affe"), STRIP_BIO_SCANNER_SLOT: CYAN}
+	var meter_colors := {1: Color("abbeff"), STRIP_HEALTH_SLOT: Color("f07779"), STRIP_OXYGEN_SLOT: CYAN, 4: Color("abbeff"), 5: Color("ffd48a"), 3: Color("b6d79a"), 9: Color("d7affe"), STRIP_BIO_SCANNER_SLOT: CYAN}
 	for index in slots:
-		var caption: String = INVENTORY_TITLES[index] if index < INVENTORY_TITLES.size() else ("Vida" if index == STRIP_HEALTH_SLOT else "Dipòsit d’oxigen")
+		var caption: String = INVENTORY_TITLES[index] if index < INVENTORY_TITLES.size() else {STRIP_HEALTH_SLOT: "Vida", STRIP_OXYGEN_SLOT: "Dipòsit d’oxigen", STRIP_QUARTZ_SLOT: "Quars", STRIP_MAGNETITE_SLOT: "Magnetita", STRIP_MEDKIT_SLOT: "Farmaciola"}[index]
 		var meter: ProgressBar
 		if meter_colors.has(index):
 			meter = _new_resource_meter(100.0, meter_colors[index])
@@ -2414,9 +2924,12 @@ func _add_inventory_strip_group(groups: HBoxContainer, title: String, slots: Arr
 		inventory_strip_values[index] = _add_inventory_slot(cards, caption, meter, 116.0)
 		var contents := inventory_strip_values[index].get_parent() as VBoxContainer
 		var card := (contents.get_parent() if meter == null else meter.get_parent().get_parent()) as PanelContainer
-		if meter != null:
+		if meter != null or index == 10:
 			card.draw.connect(_draw_low_supply_card.bind(card, index))
 		var footer := _add_inventory_strip_footer(contents)
+		if index == 10:
+			repair_kit_footer = footer
+			footer.draw.connect(_draw_repair_kit_icon.bind(footer))
 		if index == STRIP_LADDER_SLOT:
 			folding_ladder_icon = footer
 			footer.draw.connect(_draw_folding_ladder_icon.bind(footer))
@@ -2429,11 +2942,12 @@ func _add_inventory_strip_group(groups: HBoxContainer, title: String, slots: Arr
 			helmet_battery_card_button.offset_right = -12.0
 			helmet_battery_card_button.tooltip_text = "Canvia la bateria del casc quan quedi un 10% o menys"
 			_register_resource_gain_card(STRIP_BATTERY_SLOT, card)
-		elif index == STRIP_HEALTH_SLOT:
+		elif index == STRIP_MEDKIT_SLOT:
 			medkit_button = _button("", Vector2.ZERO, Vector2(66, EQUIPMENT_ICON_HEIGHT), true)
+			medkit_button.custom_minimum_size = Vector2(48, EQUIPMENT_ICON_HEIGHT)
 			medkit_button.size_flags_vertical = Control.SIZE_SHRINK_END
 			medkit_button.pressed.connect(_use_medkit)
-			medkit_button.tooltip_text = "Utilitza una farmaciola · recupera 35 punts de vida"
+			medkit_button.draw.connect(_draw_medkit_button)
 			footer.add_child(medkit_button)
 		elif index == STRIP_OXYGEN_SLOT:
 			oxygen_reserve_card_button = _new_reserve_button(_use_oxygen_cartridge, false)
@@ -2449,31 +2963,43 @@ func _add_inventory_strip_group(groups: HBoxContainer, title: String, slots: Arr
 				rockfall_tool_countdown = _add_equipment_label(footer, "", 12, ORANGE)
 				rockfall_tool_countdown.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				rockfall_tool_countdown.hide()
-		if index == 1:
-			var body := inventory_strip_values[index].get_parent() as VBoxContainer
-			beacon_signal_label = _add_equipment_label(body, "", 11, Color("abbeff"))
-			beacon_signal_meter = _new_resource_meter(100.0, Color("abbeff"))
-			beacon_signal_meter.custom_minimum_size.y = 6.0
-			body.add_child(beacon_signal_meter)
-		if meter == null:
+		if meter == null or index == 1:
 			_register_resource_gain_card(index, card)
 			if index == 1:
 				beacon_card_button = _add_inventory_card_action(card, _deploy_beacon)
-				beacon_card_button.draw.connect(func() -> void:
-					var center := Vector2(beacon_card_button.size.x * 0.5, beacon_card_button.size.y - EQUIPMENT_ICON_HEIGHT * 0.5)
-					var ink := MUTED if beacon_card_button.disabled else Color("abbeff")
-					beacon_card_button.draw_polyline(PackedVector2Array([center + Vector2(0, -6), center + Vector2(6, 0),
-						center + Vector2(0, 6), center + Vector2(-6, 0), center + Vector2(0, -6)]), ink, 1.5, true)
-					beacon_card_button.draw_arc(center, 10.0, -PI * 0.9, -PI * 0.1, 12, ink, 1.3, true))
+				beacon_signal_meter = meter
+				beacon_footer = footer
+				footer.draw.connect(_draw_beacon_footer)
+
+func _draw_beacon_footer() -> void:
+	var width := beacon_footer.size.x
+	var center := Vector2(width * 0.5, beacon_footer.size.y * 0.55)
+	var ink := MUTED if beacon_card_button.disabled else Color("abbeff")
+	var font := ThemeDB.fallback_font
+	beacon_footer.draw_string(font, Vector2(0, -4), "Senyal", HORIZONTAL_ALIGNMENT_CENTER, width, 11, Color("abbeff"))
+	beacon_footer.draw_polyline(PackedVector2Array([center + Vector2(0, -6), center + Vector2(6, 0),
+		center + Vector2(0, 6), center + Vector2(-6, 0), center + Vector2(0, -6)]), ink, 1.5, true)
+	beacon_footer.draw_arc(center, 10.0, -PI * 0.9, -PI * 0.1, 12, ink, 1.3, true)
+	beacon_footer.draw_string(font, center + Vector2(10, 4), str(_beacons_remaining()), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ink)
+
+func _draw_repair_kit_icon(footer: HBoxContainer) -> void:
+	var center := Vector2(footer.size.x * 0.5 - 22.0, footer.size.y * 0.55)
+	var ink := CYAN if _repair_kit_uses_left() > 0 else MUTED
+	if repair_kit_urgent:
+		ink = Color("ff676a")
+	footer.draw_rect(Rect2(center - Vector2(8, 5), Vector2(16, 11)), ink, false, 1.5)
+	footer.draw_rect(Rect2(center - Vector2(3, 8), Vector2(6, 3)), ink, false, 1.2)
+	footer.draw_string(ThemeDB.fallback_font, center + Vector2(12, 4), "%d/%d usos" % [repair_kit_uses_spent, _repair_kit_capacity()], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, ink)
 
 func _draw_folding_ladder_icon(footer: HBoxContainer) -> void:
-	var center := Vector2(footer.size.x * 0.5, footer.size.y * 0.55)
-	var ink := CYAN if folding_ladders > 0 else MUTED
+	var center := Vector2(footer.size.x * 0.5 - 8.0, footer.size.y * 0.55)
+	var ink := CYAN if _ladder_uses_left() > 0 else MUTED
 	for side in [-1.0, 1.0]:
 		var rail := center + Vector2(side * 5.0, 0)
 		footer.draw_line(rail + Vector2(0, -8), rail + Vector2(0, 8), ink, 1.5, true)
 	for step in [-5.0, 0.0, 5.0]:
 		footer.draw_line(center + Vector2(-5, step), center + Vector2(5, step), ink, 1.5, true)
+	footer.draw_string(ThemeDB.fallback_font, center + Vector2(10, 4), "%d/%d usos" % [ladder_uses_spent, _ladder_capacity()], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, ink)
 
 func _add_inventory_strip_footer(contents: VBoxContainer) -> HBoxContainer:
 	var labels := contents.get_children()
@@ -2526,6 +3052,14 @@ func _record_resource_gains() -> void:
 	var now := Time.get_ticks_msec()
 	for index in resource_gain_cards:
 		var count := oxygen_cartridges if index == 2 else (flashlight_spares if index == STRIP_BATTERY_SLOT else inventory_strip_values[index].text.to_int())
+		if index == 1:
+			count = _beacons_remaining()
+		elif index == STRIP_LADDER_SLOT:
+			count = _ladder_uses_left()
+		elif index == 10:
+			count = _repair_kit_uses_left()
+		elif index == STRIP_MEDKIT_SLOT:
+			count = medkits
 		var delta: int = count - resource_previous_counts.get(index, count)
 		resource_previous_counts[index] = count
 		if delta <= 0:
@@ -2563,12 +3097,12 @@ func _rockfall_clear_percent() -> int:
 
 func _update_field_action_cards() -> void:
 	var now := Time.get_ticks_msec()
-	var mining_progress: float = 1.0 - mining_remaining / MINING_SECONDS[mining_tool] if mining_cave >= 0 else -1.0
+	var mining_progress: float = 1.0 - mining_remaining / _mining_duration(mining_tool) if mining_cave >= 0 else -1.0
 	rockfall_tool_countdown.visible = rockfall_clear_remaining > 0.0
 	if rockfall_tool_countdown.visible:
 		rockfall_tool_countdown.text = "Neteja · %d%%" % _rockfall_clear_percent()
 		mining_progress = 1.0 - rockfall_clear_remaining / ROCKFALL_CLEAR_SECONDS
-	var scan_progress: float = bio_scan_elapsed / BIO_SCAN_SECONDS[bio_scanner_tier] if bio_scan_room >= 0 else -1.0
+	var scan_progress: float = bio_scan_elapsed / _bio_scan_duration(bio_scanner_tier) if bio_scan_room >= 0 else -1.0
 	for index in field_action_cards:
 		var progress := mining_progress if index == STRIP_MINING_SLOT else scan_progress
 		if progress < 0.0 and now < field_action_completed_until.get(index, 0):
@@ -2600,11 +3134,16 @@ func _bind_helmet_light_card(card: PanelContainer) -> void:
 	helmet_light_card_glow.shadow_color = Color("ffc462", 0.35)
 	helmet_light_card_glow.shadow_size = 5
 	helmet_light_card_button = _add_inventory_card_action(card, _toggle_flashlight)
-	helmet_light_card_button.draw.connect(func() -> void:
-		if light_warning_strength > 0.0:
-			helmet_light_card_button.draw_rect(
-				Rect2(Vector2.ONE, helmet_light_card_button.size - Vector2.ONE * 2),
-				Color(ORANGE, light_warning_strength), false, 2.0, true))
+	card.draw.connect(_draw_helmet_light_warning)
+
+func _draw_helmet_light_warning() -> void:
+	if light_warning_strength <= 0.0:
+		return
+	var pulse := 0.5 + 0.5 * cos(float(Time.get_ticks_msec()) * TAU / 620.0)
+	var strength := light_warning_strength * lerpf(0.55, 1.0, pulse)
+	var bounds := Rect2(Vector2(2, 2), helmet_light_card.size - Vector2(4, 4))
+	helmet_light_card.draw_rect(bounds, Color(ORANGE, 0.32 * strength))
+	helmet_light_card.draw_rect(bounds, Color("ffd48a", strength), false, 3.0, true)
 
 func _add_inventory_card_action(card: PanelContainer, action: Callable) -> Button:
 	var button := Button.new()
@@ -2639,13 +3178,13 @@ func _show_light_warning(screen_position: Vector2, reason: String) -> void:
 	light_warning_label.show()
 	_set_light_warning_strength(1.0)
 	light_warning_tween = create_tween().set_parallel(true)
-	light_warning_tween.tween_property(light_warning_label, "modulate:a", 0.0, 0.3).set_delay(2.0)
-	light_warning_tween.tween_method(_set_light_warning_strength, 1.0, 0.0, 2.3)
+	light_warning_tween.tween_property(light_warning_label, "modulate:a", 0.0, 0.4).set_delay(2.8)
+	light_warning_tween.tween_method(_set_light_warning_strength, 1.0, 0.0, 3.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	light_warning_tween.chain().tween_callback(light_warning_label.hide)
 
 func _set_light_warning_strength(strength: float) -> void:
 	light_warning_strength = strength
-	helmet_light_card_button.queue_redraw()
+	helmet_light_card.queue_redraw()
 
 func _draw_meter_dividers(meter: ProgressBar) -> void:
 	const SEGMENTS := 8
@@ -2702,8 +3241,10 @@ func _add_equipment_label(contents: BoxContainer, title: String, font_size: int,
 
 func _add_workshop_offer(grid: GridContainer, title: String, description: String, action: Button) -> Label:
 	var contents := _add_equipment_card(grid, Vector2(204, 121))
-	_add_equipment_label(contents, title, 15, CYAN)
+	var caption := _add_equipment_label(contents, title, 15, CYAN)
+	caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var detail := _add_equipment_label(contents, description, 12, Color("b4ccd2"))
+	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	action.custom_minimum_size.y = 28
 	contents.add_child(action)
@@ -2712,29 +3253,74 @@ func _add_workshop_offer(grid: GridContainer, title: String, description: String
 func _open_inventory(workshop: bool) -> void:
 	_update_research_panel()
 	inventory_tabs.current_tab = 1 if workshop else 0
-	var height := 640 if inventory_tabs.current_tab == 1 else 580
-	inventory_window.popup_centered(Vector2i(480, height))
+	inventory_window.popup_centered(_inventory_tab_size(inventory_tabs.current_tab))
+	_resize_inventory_tab(inventory_tabs.current_tab)
+
+func _inventory_tab_size(tab: int) -> Vector2i:
+	var viewport_size := Vector2i(get_viewport_rect().size)
+	var available_height := maxi(1, floori(equipment_bar.position.y) - 52)
+	if tab >= 1:
+		return Vector2i(viewport_size.x - 36, available_height)
+	return Vector2i(480, mini(580, available_height))
+
+func _resize_inventory_tab(tab: int) -> void:
+	if not inventory_window.visible:
+		return
+	inventory_window.size = _inventory_tab_size(tab)
+	var viewport_size := Vector2i(get_viewport_rect().size)
+	var top := maxi(40, (floori(equipment_bar.position.y) - inventory_window.size.y) / 2)
+	inventory_window.position = Vector2i((viewport_size.x - inventory_window.size.x) / 2, top)
+
+func _add_inventory_item(grid: GridContainer, title: String) -> void:
+	var level_label := _add_inventory_slot(grid, title)
+	inventory_values.append(level_label)
+	var detail := _add_equipment_label(level_label.get_parent(), "", 11, MUTED)
+	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	inventory_details.append(detail)
 
 func _update_inventory_screen() -> void:
 	if not is_instance_valid(inventory_tabs):
 		return
 	folding_ladder_icon.queue_redraw()
 	var charge := _flashlight_charge_percent()
-	var light_state := "Encesa" if flashlight_on else "Apagada"
 	var samples := _sample_totals()
 	var values := [
-		str(materials_in_pack), str(_beacons_remaining()), str(oxygen_cartridges),
-		"%s · %d%%\n%d per jaciment" % [MINING_TOOLS[mining_tool], ceili(mining_tool_integrity), mining_tool + 1],
+		str(materials_in_pack), "Nv. %d · %d%%" % [_supply_tier("beacon") + 1, int(beacon_signal_meter.value)], str(oxygen_cartridges),
+		"Nv. %d · %d%%" % [mining_tool + 1, ceili(mining_tool_integrity)],
 		_inventory_suit_text(),
-		"%s · %d%%\nBateries del casc · %d" % [light_state, charge, flashlight_spares], str(_research_points()),
+		"Nv. %d · %d%%" % [_supply_tier("helmet_light") + 1, charge], str(_research_points()),
 		str(samples.x + samples.y), str(_earned_research_record_points()),
-		_boots_summary(), str(repair_kits), "%s · %d%%\n%d s per escaneig" % ["Avançat" if bio_scanner_tier > 0 else "Estàndard", ceili(bio_scanner_integrity), BIO_SCAN_SECONDS[bio_scanner_tier]], str(folding_ladders)]
+		_boots_summary(), "Nv. %d" % (_supply_tier("repair_kit") + 1), "Nv. %d · %d%%" % [bio_scanner_tier + 1, ceili(bio_scanner_integrity)], "Nv. %d" % (_supply_tier("ladder") + 1)]
 	for index in range(values.size()):
-		inventory_values[index].text = values[index]
 		if is_instance_valid(inventory_strip_values[index]):
 			inventory_strip_values[index].text = values[index]
+	inventory_strip_values[STRIP_QUARTZ_SLOT].text = str(quartz_in_pack)
+	inventory_strip_values[STRIP_MAGNETITE_SLOT].text = str(magnetite_in_pack)
+	repair_kit_footer.queue_redraw()
+	var tiers := [equipped_boots, bio_scanner_tier, suit_tier, mining_tool]
+	for supply_id: String in SUPPLY_UPGRADES:
+		tiers.append(_supply_tier(supply_id))
+	var details := [
+		"Velocitat base: %d u/s" % roundi(_boots_speed(equipped_boots)),
+		"%.1f s per escaneig" % _bio_scan_duration(bio_scanner_tier),
+		"%d%% menys de desgast per pressió" % (suit_tier * 4) if suit_tier > 0 else "Protecció estàndard",
+		"%d materials per jaciment en %.1f s" % [_mining_yield(mining_tool), _mining_duration(mining_tool)],
+		"%d min de capacitat" % int(_oxygen_capacity() / 60.0),
+		"%d s d’oxigen per reserva" % int(OXYGEN_CARTRIDGE_SECONDS + _supply_bonus("oxygen_reserve")),
+		"%d s de llum per bateria" % int(_helmet_battery_duration()),
+		"%d unitats d’abast" % roundi(_beacon_range()),
+		"Recupera %d punts de vida" % int(35.0 + _supply_bonus("medkit")),
+		"%d/%d usos gastats · repara %d punts" % [repair_kit_uses_spent, _repair_kit_capacity(), int(FIELD_REPAIR_AMOUNT + _supply_bonus("repair_kit"))],
+		"%d de %d usos gastats" % [ladder_uses_spent, _ladder_capacity()]]
+	for index in range(tiers.size()):
+		inventory_values[index].text = "Nivell %d" % (int(tiers[index]) + 1)
+		inventory_details[index].text = details[index]
+	var equipment_slots := ["botes", "escaner", "vestit", "mineria"]
+	for index in range(equipment_slots.size()):
+		var equipped_id: String = equipped_modifiers.get(equipment_slots[index], "")
+		if not equipped_id.is_empty():
+			inventory_details[index].text += "\n" + EQUIPMENT_MODIFIERS[equipped_id][1]
 	_update_boots_display()
-	inventory_strip_values[5].text = "%s · %d%%" % [light_state, charge]
 	var helmet_color := ORANGE if charge <= LOW_SUPPLY_PERCENT else (Color("ffd48a") if flashlight_on else CYAN)
 	inventory_strip_values[5].add_theme_color_override("font_color", helmet_color)
 	helmet_light_card.add_theme_stylebox_override("panel", helmet_light_card_glow if flashlight_on else helmet_light_card_idle)
@@ -2744,46 +3330,132 @@ func _update_inventory_screen() -> void:
 		helmet_light_card_button.tooltip_text = "Canvia la bateria del casc" if flashlight_spares > 0 else "Sense bateries del casc"
 	oxygen_reserve_card_button.queue_redraw()
 	helmet_battery_card_button.queue_redraw()
+	beacon_footer.queue_redraw()
 	_record_resource_gains()
 	inventory_strip_meters[3].value = mining_tool_integrity
 	inventory_strip_meters[5].value = charge
 	inventory_strip_meters[STRIP_BIO_SCANNER_SLOT].value = bio_scanner_integrity
-	workshop_balance.text = "Materials: %d     Punts de recerca: %d" % [materials_in_pack, _research_points()]
+	workshop_materials_balance.text = "Ferro: %d   Quars: %d   Magnetita: %d   ·   Punts d’investigació: %d" % [materials_in_pack, quartz_in_pack, magnetite_in_pack, _research_points()]
 	buy_medkit_button.disabled = not surface_mode or materials_in_pack < MEDKIT_COST
 	_update_health_display()
-	buy_folding_ladder_button.disabled = not surface_mode or materials_in_pack < FOLDING_LADDER_COST
+	repair_folding_ladder_button.disabled = not surface_mode or materials_in_pack < FOLDING_LADDER_REPAIR_COST or ladder_uses_spent == 0
 	if not surface_mode:
-		workshop_balance.text += "\nCompres i millores al taller de la base"
-	refill_oxygen_button.disabled = not surface_mode or materials_in_pack < OXYGEN_REFILL_COST or oxygen_seconds >= OXYGEN_CAPACITY
+		workshop_materials_balance.text += " · Compra a la base"
+	refill_oxygen_button.disabled = not surface_mode or materials_in_pack < OXYGEN_REFILL_COST or oxygen_seconds >= _oxygen_capacity()
 	repair_suit_button.disabled = not surface_mode or materials_in_pack < SUIT_REPAIR_COST or suit_integrity >= 100.0
 	repair_mining_tool_button.disabled = not surface_mode or materials_in_pack < MINING_REPAIR_COST or mining_tool_integrity >= 100.0
 	buy_helmet_battery_button.disabled = not surface_mode or materials_in_pack < HELMET_BATTERY_COST
-	var next_tool := mining_tool + 1
-	mining_tool_button.disabled = not surface_mode or next_tool >= MINING_TOOLS.size() or materials_in_pack < MINING_TOOL_COSTS[next_tool]
-	if next_tool >= MINING_TOOLS.size():
-		mining_offer.text = "%s\n%d materials en %d s" % [MINING_TOOLS[mining_tool], mining_tool + 1, MINING_SECONDS[mining_tool]]
-		mining_tool_button.text = "EQUIPAT"
-	else:
-		mining_offer.text = "%s\n%d materials en %d s" % [MINING_TOOLS[next_tool], next_tool + 1, MINING_SECONDS[next_tool]]
-		mining_tool_button.text = "COMPRA · %d MATERIALS" % MINING_TOOL_COSTS[next_tool]
-	var next_boots := equipped_boots + 1
-	var has_upgrade := next_boots < BOOT_MODELS.size()
-	var model := next_boots if has_upgrade else equipped_boots
-	var speed_gain := roundi((float(BOOT_SPEEDS[model]) / BOOT_SPEEDS[0] - 1.0) * 100.0)
-	boots_offer.text = "%s\nVelocitat +%d%%" % [BOOT_MODELS[model], speed_gain]
-	boots_button.disabled = not surface_mode or not has_upgrade or materials_in_pack < BOOT_COSTS[next_boots]
-	boots_button.text = "COMPRA · %d MATERIALS" % BOOT_COSTS[next_boots] if has_upgrade else "EQUIPADES"
+	for id in modifier_buttons:
+		var action := modifier_buttons[id]
+		var slot: String = EQUIPMENT_MODIFIERS[id][0]
+		var equipped: bool = equipped_modifiers.get(slot, "") == id
+		action.disabled = not surface_mode or (not owned_modifiers.has(id) and not _can_upgrade_equipment(MODIFIER_MATERIAL_COST, MODIFIER_RESEARCH_COST))
+		var caption := "ACTIU · DESACTIVA" if equipped else ("ACTIVA" if owned_modifiers.has(id) else "COMPRA I ACTIVA · %d FERRO + %d PUNT" % [MODIFIER_MATERIAL_COST, MODIFIER_RESEARCH_COST])
+		action.text = "%s\n%s" % [EQUIPMENT_MODIFIERS[id][1], caption]
+		action.tooltip_text = EQUIPMENT_MODIFIERS[id][2]
+	var next_tool := mini(mining_tool + 1, MAX_EQUIPMENT_LEVEL - 1)
+	mining_offer.text = "%s · %s\n%d materials en %.1f s" % [_tier_caption(mining_tool), _mining_model(next_tool), _mining_yield(next_tool), _mining_duration(next_tool)]
+	_update_upgrade_button(mining_tool_button, mining_tool)
+	var next_boots := mini(equipped_boots + 1, MAX_EQUIPMENT_LEVEL - 1)
+	boots_offer.text = "%s · %s\nVelocitat base: %d u/s" % [_tier_caption(equipped_boots), _boots_model(next_boots), roundi(_boots_speed(next_boots))]
+	_update_upgrade_button(boots_button, equipped_boots)
 	repair_boots_button.disabled = not surface_mode or materials_in_pack < BOOT_REPAIR_COST or boots_integrity >= 100.0
-	buy_repair_kit_button.disabled = not surface_mode or materials_in_pack < REPAIR_KIT_COST
-	upgrade_bio_scanner_button.disabled = not surface_mode or bio_scanner_tier > 0 or materials_in_pack < BIO_SCANNER_UPGRADE_COST
-	upgrade_bio_scanner_button.text = "EQUIPAT" if bio_scanner_tier > 0 else "MILLORA · %d MATERIALS" % BIO_SCANNER_UPGRADE_COST
+	buy_repair_kit_button.disabled = not surface_mode or materials_in_pack < REPAIR_KIT_COST or repair_kit_uses_spent <= 0
+	_update_upgrade_button(upgrade_bio_scanner_button, bio_scanner_tier)
+	_update_upgrade_button(craft_suit_button, suit_tier)
+	var next_scanner := mini(bio_scanner_tier + 1, MAX_EQUIPMENT_LEVEL - 1)
+	var next_suit := mini(suit_tier + 1, MAX_EQUIPMENT_LEVEL - 1)
+	scanner_upgrade_offer.text = "%s\nEscaneig en %.1f s · −%.1f d’estat" % [_tier_caption(bio_scanner_tier), _bio_scan_duration(next_scanner), _bio_scan_wear(next_scanner)]
+	suit_upgrade_offer.text = "%s\n%d%% menys de desgast per pressió" % [_tier_caption(suit_tier), next_suit * 4]
 	repair_bio_scanner_button.disabled = not surface_mode or bio_scanner_integrity >= 100.0 or materials_in_pack < BIO_SCANNER_REPAIR_COST
+	for supply_id in supply_upgrade_buttons:
+		var tier := _supply_tier(supply_id)
+		_update_upgrade_button(supply_upgrade_buttons[supply_id], tier)
+		var effect: String = SUPPLY_UPGRADES[supply_id][1]
+		if supply_id == "beacon":
+			var range_now := roundi(_beacon_range())
+			effect = "Abast: %d → %d u" % [range_now, range_now + 50] if tier < MAX_EQUIPMENT_LEVEL - 1 else "Abast: %d u" % range_now
+		if supply_id == "repair_kit":
+			effect = "%d/%d usos gastats · +1 ús per nivell" % [repair_kit_uses_spent, _repair_kit_capacity()]
+		if supply_id == "ladder":
+			effect = "%d de %d usos gastats" % [ladder_uses_spent, _ladder_capacity()]
+			if tier < MAX_EQUIPMENT_LEVEL - 1:
+				effect += " · +1 ús al nivell següent"
+		supply_upgrade_offers[supply_id].text = "%s\n%s" % [_tier_caption(tier), effect]
+
+func _tier_caption(tier: int) -> String:
+	return "Nivell %d → %d" % [tier + 1, tier + 2] if tier < MAX_EQUIPMENT_LEVEL - 1 else "Nivell %d" % MAX_EQUIPMENT_LEVEL
+
+func _equipment_cost(tier: int) -> Vector2i:
+	return Vector2i(2 + tier, 1 + floori(float(tier) / 3.0))
+
+func _upgrade_mineral(tier: int) -> String:
+	if tier < 3 or tier % 3 != 0:
+		return ""
+	return "quars" if tier % 6 == 3 else "magnetita"
+
+func _has_upgrade_mineral(mineral: String) -> bool:
+	match mineral:
+		"quars": return quartz_in_pack > 0
+		"magnetita": return magnetite_in_pack > 0
+		_: return true
+
+func _update_upgrade_button(button: Button, tier: int) -> void:
+	var cost := _equipment_cost(tier)
+	var mineral := _upgrade_mineral(tier)
+	button.disabled = tier >= MAX_EQUIPMENT_LEVEL - 1 or not _can_upgrade_equipment(cost.x, cost.y) or not _has_upgrade_mineral(mineral)
+	if tier >= MAX_EQUIPMENT_LEVEL - 1:
+		button.text = "NIVELL MÀXIM"
+		button.tooltip_text = ""
+		return
+	button.text = _equipment_upgrade_caption(cost.x, cost.y)
+	if not mineral.is_empty():
+		button.text += "\n+ 1 DE %s" % mineral.to_upper()
+	button.tooltip_text = button.text.replace("\n", " ")
+
+func _pay_equipment_upgrade(tier: int) -> bool:
+	var cost := _equipment_cost(tier)
+	var mineral := _upgrade_mineral(tier)
+	if tier >= MAX_EQUIPMENT_LEVEL - 1 or not _can_upgrade_equipment(cost.x, cost.y) or not _has_upgrade_mineral(mineral):
+		return false
+	materials_in_pack -= cost.x
+	equipment_research_spent += cost.y
+	match mineral:
+		"quars": quartz_in_pack -= 1
+		"magnetita": magnetite_in_pack -= 1
+	return true
+
+func _can_upgrade_equipment(material_cost: int, research_cost: int) -> bool:
+	return surface_mode and materials_in_pack >= material_cost and _research_points() >= research_cost
+
+func _equipment_upgrade_caption(material_cost: int, research_cost: int) -> String:
+	return "MILLORA · %d FERRO + %d %s" % [material_cost, research_cost, "PUNT" if research_cost == 1 else "PUNTS"]
+
+func _supply_tier(supply_id: String) -> int:
+	return supply_tiers.get(supply_id, 0)
+
+func _supply_bonus(supply_id: String) -> float:
+	return float(SUPPLY_UPGRADES[supply_id][2]) * _supply_tier(supply_id)
+
+func _upgrade_supply(supply_id: String) -> void:
+	var tier := _supply_tier(supply_id)
+	if not _pay_equipment_upgrade(tier):
+		return
+	supply_tiers[supply_id] = tier + 1
+	_update_oxygen_display()
+	_update_research_panel()
+	_update_beacon_status()
+
+func _bio_scan_duration(tier: int) -> float:
+	return lerpf(6.0, 1.5, float(tier) / (MAX_EQUIPMENT_LEVEL - 1))
+
+func _bio_scan_wear(tier: int) -> float:
+	return lerpf(8.0, 2.0, float(tier) / (MAX_EQUIPMENT_LEVEL - 1))
 
 func _upgrade_bio_scanner() -> void:
-	if not surface_mode or bio_scanner_tier > 0 or materials_in_pack < BIO_SCANNER_UPGRADE_COST:
+	if not _pay_equipment_upgrade(bio_scanner_tier):
 		return
-	materials_in_pack -= BIO_SCANNER_UPGRADE_COST
-	bio_scanner_tier = 1
+	bio_scanner_tier += 1
 	bio_scanner_integrity = 100.0
 	_update_research_panel()
 
@@ -2794,16 +3466,25 @@ func _repair_bio_scanner() -> void:
 	bio_scanner_integrity = 100.0
 	_update_research_panel()
 
+func _repair_kit_capacity() -> int:
+	return 1 + _supply_tier("repair_kit")
+
+func _repair_kit_uses_left() -> int:
+	return _repair_kit_capacity() - repair_kit_uses_spent
+
+func _repair_kit_uses_percent() -> float:
+	return 100.0 * _repair_kit_uses_left() / _repair_kit_capacity()
+
 func _buy_repair_kit() -> void:
-	if not surface_mode or materials_in_pack < REPAIR_KIT_COST:
+	if not surface_mode or materials_in_pack < REPAIR_KIT_COST or repair_kit_uses_spent <= 0:
 		return
 	materials_in_pack -= REPAIR_KIT_COST
-	repair_kits += 1
+	repair_kit_uses_spent -= 1
 	_update_research_panel()
 	status_label.text = "CAIXA D’EINES COMPRADA"
 
 func _can_use_repair_kit() -> bool:
-	return not surface_mode and analysis_mode and selected_cave == current_cave_id and repair_kits > 0 and mining_cave < 0 and bio_scan_room < 0
+	return not surface_mode and analysis_mode and selected_cave == current_cave_id and _repair_kit_uses_left() > 0 and mining_cave < 0 and bio_scan_room < 0
 
 func _open_field_repair_menu() -> void:
 	if not _can_use_repair_kit():
@@ -2821,39 +3502,45 @@ func _apply_field_repair(target: int) -> void:
 		FieldRepair.SUIT:
 			if suit_integrity >= 100.0:
 				return
-			suit_integrity = minf(100.0, suit_integrity + FIELD_REPAIR_AMOUNT)
+			suit_integrity = minf(100.0, suit_integrity + FIELD_REPAIR_AMOUNT + _supply_bonus("repair_kit"))
 		FieldRepair.BOOTS:
 			if boots_integrity >= 100.0:
 				return
-			boots_integrity = minf(100.0, boots_integrity + FIELD_REPAIR_AMOUNT)
+			boots_integrity = minf(100.0, boots_integrity + FIELD_REPAIR_AMOUNT + _supply_bonus("repair_kit"))
 		FieldRepair.MINING_TOOL:
 			if mining_tool_integrity >= 100.0:
 				return
-			mining_tool_integrity = minf(100.0, mining_tool_integrity + FIELD_REPAIR_AMOUNT)
+			mining_tool_integrity = minf(100.0, mining_tool_integrity + FIELD_REPAIR_AMOUNT + _supply_bonus("repair_kit"))
 		FieldRepair.BIO_SCANNER:
 			if bio_scanner_integrity >= 100.0:
 				return
-			bio_scanner_integrity = minf(100.0, bio_scanner_integrity + FIELD_REPAIR_AMOUNT)
+			bio_scanner_integrity = minf(100.0, bio_scanner_integrity + FIELD_REPAIR_AMOUNT + _supply_bonus("repair_kit"))
 		_:
 			return
-	repair_kits -= 1
+	repair_kit_uses_spent += 1
 	_update_equipment_display()
 	status_label.text = "REPARACIÓ DE CAMP COMPLETADA"
 
 func _buy_boots() -> void:
-	var next_boots := equipped_boots + 1
-	if not surface_mode or next_boots >= BOOT_MODELS.size() or materials_in_pack < BOOT_COSTS[next_boots]:
+	if not _pay_equipment_upgrade(equipped_boots):
 		return
-	materials_in_pack -= BOOT_COSTS[next_boots]
-	equipped_boots = next_boots
+	equipped_boots += 1
 	boots_integrity = 100.0
 	_update_research_panel()
 
+func _boots_model(tier: int) -> String:
+	return BOOT_MODELS[mini(tier, BOOT_MODELS.size() - 1)]
+
+func _boots_speed(tier: int) -> float:
+	return BOOT_SPEEDS[mini(tier, BOOT_SPEEDS.size() - 1)] + maxf(0.0, tier - 2) * 9.0
+
 func _movement_speed() -> float:
-	return float(BOOT_SPEEDS[equipped_boots]) * lerpf(0.7, 1.0, boots_integrity / 100.0)
+	var terrain := _room_environment(_cave_at_position(unit_position))
+	var traction := 1.0 if _modifier_protects("botes", terrain) else (0.75 if terrain == "aigua" or terrain == "gel" else 1.0)
+	return _boots_speed(equipped_boots) * lerpf(0.7, 1.0, boots_integrity / 100.0) * traction
 
 func _boots_summary() -> String:
-	return "%s · %d%%\n%d u/s" % [BOOT_MODELS[equipped_boots], ceili(boots_integrity), roundi(_movement_speed())]
+	return "Nv. %d · %d%%" % [equipped_boots + 1, ceili(boots_integrity)]
 
 func _update_boots_display() -> void:
 	if not inventory_strip_meters.has(9):
@@ -2861,7 +3548,6 @@ func _update_boots_display() -> void:
 	inventory_strip_meters[9].value = boots_integrity
 	var summary := _boots_summary()
 	if inventory_strip_values[9].text != summary:
-		inventory_values[9].text = summary
 		inventory_strip_values[9].text = summary
 
 func _repair_boots_at_base() -> void:
@@ -2873,10 +3559,10 @@ func _repair_boots_at_base() -> void:
 	status_label.text = "BOTES REPARADES"
 
 func _refill_oxygen_at_base() -> void:
-	if not surface_mode or materials_in_pack < OXYGEN_REFILL_COST or oxygen_seconds >= OXYGEN_CAPACITY:
+	if not surface_mode or materials_in_pack < OXYGEN_REFILL_COST or oxygen_seconds >= _oxygen_capacity():
 		return
 	materials_in_pack -= OXYGEN_REFILL_COST
-	oxygen_seconds = OXYGEN_CAPACITY
+	oxygen_seconds = _oxygen_capacity()
 	_update_oxygen_display()
 	_update_research_panel()
 	status_label.text = "DIPÒSIT D’OXIGEN RECARREGAT"
@@ -2894,17 +3580,28 @@ func _buy_helmet_battery() -> void:
 		return
 	materials_in_pack -= HELMET_BATTERY_COST
 	if flashlight_charge <= 0.0:
-		flashlight_charge = FLASHLIGHT_BATTERY_SECONDS
+		flashlight_charge = _helmet_battery_duration()
 	else:
 		flashlight_spares += 1
 	_update_research_panel()
 	status_label.text = "BATERIA DEL CASC COMPRADA"
 
+func _draw_medkit_button() -> void:
+	var center := medkit_button.size * 0.5 - Vector2(8, 0)
+	var ink := MUTED if medkit_button.disabled else Color("f6a2a4")
+	medkit_button.draw_rect(Rect2(center - Vector2(8, 5), Vector2(16, 12)), ink, false, 1.4)
+	medkit_button.draw_rect(Rect2(center - Vector2(3, 8), Vector2(6, 3)), ink, false, 1.2)
+	medkit_button.draw_line(center + Vector2(-3, 1), center + Vector2(3, 1), ink, 1.5, true)
+	medkit_button.draw_line(center + Vector2(0, -2), center + Vector2(0, 4), ink, 1.5, true)
+	medkit_button.draw_string(ThemeDB.fallback_font, center + Vector2(13, 5), str(medkits), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ink)
+
 func _update_health_display() -> void:
 	inventory_strip_meters[STRIP_HEALTH_SLOT].value = health
 	inventory_strip_values[STRIP_HEALTH_SLOT].text = "%d%%" % ceili(health)
-	medkit_button.text = "+  %d" % medkits
+	inventory_strip_values[STRIP_MEDKIT_SLOT].text = "Nv. %d" % (_supply_tier("medkit") + 1)
+	medkit_button.tooltip_text = "Utilitza una farmaciola · recupera %d punts de vida" % int(35.0 + _supply_bonus("medkit"))
 	medkit_button.disabled = medkits <= 0 or health >= 100.0 or health <= 0.0
+	medkit_button.queue_redraw()
 
 func _buy_medkit() -> void:
 	if not surface_mode or materials_in_pack < MEDKIT_COST:
@@ -2917,24 +3614,40 @@ func _use_medkit() -> void:
 	if medkits <= 0 or health >= 100.0 or health <= 0.0:
 		return
 	medkits -= 1
-	health = minf(100.0, health + 35.0)
+	health = minf(100.0, health + 35.0 + _supply_bonus("medkit"))
 	_update_equipment_display()
 	status_label.text = "FARMACIOLA UTILITZADA"
 
-func _buy_folding_ladder() -> void:
-	if not surface_mode or materials_in_pack < FOLDING_LADDER_COST:
+func _ladder_capacity() -> int:
+	return 1 + _supply_tier("ladder")
+
+func _ladder_uses_left() -> int:
+	return _ladder_capacity() - ladder_uses_spent
+
+func _repair_folding_ladder() -> void:
+	if not surface_mode or materials_in_pack < FOLDING_LADDER_REPAIR_COST or ladder_uses_spent == 0:
 		return
-	materials_in_pack -= FOLDING_LADDER_COST
-	folding_ladders += 1
+	materials_in_pack -= FOLDING_LADDER_REPAIR_COST
+	ladder_uses_spent = 0
 	_update_equipment_display()
-	status_label.text = "ESCALA PLEGABLE COMPRADA"
+	status_label.text = "ESCALA PLEGABLE REPARADA"
+
+func _mining_model(tier: int) -> String:
+	return MINING_TOOLS[mini(tier, MINING_TOOLS.size() - 1)]
+
+func _mining_duration(tier: int) -> float:
+	return MINING_SECONDS[mini(tier, MINING_SECONDS.size() - 1)] - maxf(0.0, tier - 2) * (1.45 / (MAX_EQUIPMENT_LEVEL - 3))
+
+func _mining_yield(tier: int) -> int:
+	return tier + 1
+
+func _mining_wear(tier: int) -> float:
+	return MINING_WEAR_PER_DEPOSIT[mini(tier, MINING_WEAR_PER_DEPOSIT.size() - 1)] - maxf(0.0, tier - 2) * (3.0 / (MAX_EQUIPMENT_LEVEL - 3))
 
 func _buy_mining_tool() -> void:
-	var next_tool := mining_tool + 1
-	if not surface_mode or next_tool >= MINING_TOOLS.size() or materials_in_pack < MINING_TOOL_COSTS[next_tool]:
+	if not _pay_equipment_upgrade(mining_tool):
 		return
-	materials_in_pack -= MINING_TOOL_COSTS[next_tool]
-	mining_tool = next_tool
+	mining_tool += 1
 	mining_tool_integrity = 100.0
 	_update_research_panel()
 
@@ -2946,22 +3659,109 @@ func _repair_mining_tool_at_base() -> void:
 	_update_research_panel()
 	status_label.text = "EINA DE MINERIA REPARADA"
 
-func _draw_depth_diagram() -> void:
-	depth_diagram.draw_line(Vector2(12, 15), Vector2(12, 15 + OXIDIZED_CAVES_DEPTH * 26), MUTED, 2.0, true)
-	for level in range(OXIDIZED_CAVES_DEPTH + 1):
-		var unlocked := level <= maxi(1, current_level) or inactive_levels.has(level)
-		if level == current_level + 1 and explored_caves.has(descent_access):
-			unlocked = true
-		var center := Vector2(12, 15 + level * 26)
-		var color := CYAN if level == current_level else (MUTED if unlocked else Color("49616d"))
-		depth_diagram.draw_circle(center, 7.0, PANEL, true, -1.0, true)
-		depth_diagram.draw_circle(center, 7.0, color, level == current_level, -1.0 if level == current_level else 1.5, true)
-		var label := "Nivell 0 · superfície" if level == 0 else "Nivell %d" % -level
-		if level == current_level:
-			label += " · ETS AQUÍ"
-		elif not unlocked:
-			label += " · ACCÉS PENDENT"
-		depth_diagram.draw_string(ThemeDB.fallback_font, center + Vector2(17, 5), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, color)
+func _build_depth_selector(parent: Control) -> void:
+	depth_diagram = ScrollContainer.new()
+	depth_diagram.position = Vector2(16, 156)
+	depth_diagram.size = Vector2(248, 112)
+	depth_diagram.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	parent.add_child(depth_diagram)
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 2)
+	depth_diagram.add_child(list)
+	for level in range(CAMPAIGN_DEPTH + 1):
+		if DEPTH_ZONE_NAMES.has(level):
+			if level > 1:
+				list.add_child(HSeparator.new())
+			var heading := _add_equipment_label(list, DEPTH_ZONE_NAMES[level], 11, Color("abbeff"))
+			heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		var caption := "Superfície · 0" if level == 0 else "Nivell −%d" % level
+		var row := _button(caption, Vector2.ZERO, Vector2.ZERO, true)
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.custom_minimum_size.y = 24
+		row.pressed.connect(_request_depth_trip.bind(level))
+		list.add_child(row)
+		depth_rows.append(row)
+		var percent := Label.new()
+		percent.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		percent.add_theme_font_size_override("font_size", 11)
+		percent.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(percent)
+		percent.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		percent.offset_right = -8
+		depth_percentages.append(percent)
+	depth_trip_dialog = ConfirmationDialog.new()
+	depth_trip_dialog.title = "Confirma el trajecte"
+	depth_trip_dialog.ok_button_text = "CONTINUA"
+	depth_trip_dialog.cancel_button_text = "CANCEL·LA"
+	depth_trip_dialog.exclusive = true
+	depth_trip_dialog.dialog_autowrap = true
+	depth_trip_dialog.confirmed.connect(func() -> void:
+		var action := pending_depth_action
+		pending_depth_action = Callable()
+		action.call())
+	depth_trip_dialog.canceled.connect(func() -> void: pending_depth_action = Callable())
+	add_child(depth_trip_dialog)
+
+func _depth_state(level: int) -> Dictionary:
+	if level > 0 and level == maxi(1, current_level):
+		return _level_snapshot()
+	return inactive_levels.get(level, {})
+
+func _refresh_depth_selector() -> void:
+	if depth_rows.is_empty() or world.is_empty():
+		return
+	for level in range(CAMPAIGN_DEPTH + 1):
+		var row := depth_rows[level]
+		var state := _depth_state(level)
+		var discovered: bool = level == 0 or (not state.is_empty() and not state.visited_caves.is_empty())
+		var active := level == current_level
+		var caption := "Superfície · 0" if level == 0 else "Nivell −%d" % level
+		if active:
+			caption += " · ETS AQUÍ"
+		elif not discovered:
+			caption += " · PER DESCOBRIR"
+		row.text = ("%s  " % ("●" if active else "○")) + caption
+		row.add_theme_color_override("font_color", CYAN if active else (Color("dcecf0") if discovered else MUTED))
+		depth_percentages[level].text = "—"
+		if level == 0:
+			row.tooltip_text = "Base de superfície"
+		elif not discovered:
+			row.tooltip_text = "Nivell encara per descobrir" if level <= OXIDIZED_CAVES_DEPTH else "Nivell encara no disponible"
+		else:
+			var counts := _depth_discovery_counts(state)
+			depth_percentages[level].text = "%d%%" % floori(_overall_discovery(counts))
+			var detail := PackedStringArray()
+			for index in range(DEPTH_CATEGORIES.size()):
+				detail.append("%s · %s" % [DEPTH_CATEGORIES[index], _discovery_percentage(counts[index])])
+			row.tooltip_text = "\n".join(detail)
+
+func _depth_discovery_counts(state: Dictionary) -> Array[Vector2i]:
+	var saved_world: Dictionary = state.world
+	var minerals := Vector2i(0, state.material_sites.size())
+	var size: Vector2i = saved_world.grid_size
+	for cave_id in state.material_sites:
+		var point: Vector2 = state.material_sites[cave_id]
+		var cell := Vector2i((point / saved_world.cell_size).floor())
+		var revealed: bool = state.revealed_mask[cell.y * size.x + cell.x] == 1
+		if state.collected_materials.has(cave_id) or state.explored_caves.has(cave_id) or revealed:
+			minerals.x += 1
+	return [
+		Vector2i(state.explored_caves.size(), saved_world.caves.size()),
+		Vector2i(state.completed_gallery_traces.size(), saved_world.corridors.size()),
+		Vector2i(state.analyzed_flora.size(), state.flora_sites.size()),
+		Vector2i(state.analyzed_fauna.size(), state.fauna_sites.size()),
+		minerals,
+	]
+
+func _overall_discovery(counts: Array[Vector2i]) -> float:
+	var total := 0.0
+	var categories := 0
+	for count in counts:
+		if count.y > 0:
+			total += float(count.x) / float(count.y)
+			categories += 1
+	return 100.0 * total / maxf(1.0, categories)
 
 func _fit_discovered_map() -> void:
 	if surface_mode or analysis_mode or world.is_empty():
@@ -2976,14 +3776,23 @@ func _fit_discovered_map() -> void:
 			for exit_info in _visible_exits_for_cave(cave.id):
 				bounds = bounds.expand(exit_info.position + exit_info.direction * 12.0)
 	for corridor in world.corridors:
-		for span in _map_gallery_spans(corridor):
-			for point in span:
-				bounds = bounds.expand(point)
-	var area := _view_rect()
-	var available := area.size - Vector2(88, bottom_panel.size.y + equipment_bar.size.y + 96)
+		var half_width := Vector2.ONE * float(corridor.width) * 0.5
+		for span: PackedVector2Array in _map_gallery_spans(corridor):
+			for point in _map_gallery_span_at_mouths(span, corridor):
+				bounds = bounds.expand(point - half_width).expand(point + half_width)
+	var view := _view_rect()
+	var left_panel := depth_diagram.get_parent() as Control
+	var left := maxf(view.position.x, left_panel.get_global_rect().end.x + 12.0)
+	var right := minf(view.end.x, minf(map_legend_panel.position.x, level_panel.position.x) - 12.0)
+	var top := room_progress_label.position.y + 60.0
+	if low_supply_label.visible:
+		top = low_supply_label.get_global_rect().end.y
+	var bottom := navigation_panel.position.y
+	var area := Rect2(left, top, maxf(1.0, right - left), maxf(1.0, bottom - top))
+	var available := (area.size - Vector2(88, 40)).max(Vector2.ONE)
 	var fit := minf(available.x / maxf(bounds.size.x, 1.0), available.y / maxf(bounds.size.y, 1.0))
-	zoom_level = clampf(fit, MAP_MIN_ZOOM, MAP_ENTRY_ZOOM)
-	var center_offset := Vector2(0, -(bottom_panel.size.y + equipment_bar.size.y) * 0.5)
+	zoom_level = minf(fit, MAP_ENTRY_ZOOM)
+	var center_offset := area.get_center() - view.get_center()
 	camera_offset = center_offset - (bounds.get_center() - Generator.WORLD_RECT.size * 0.5) * zoom_level
 	queue_redraw()
 
@@ -3014,16 +3823,37 @@ func _layout_panels() -> void:
 	level_progress_strip.scale = Vector2.ONE * progress_scale
 	var progress_extent := level_progress_strip.size * progress_scale
 	level_progress_strip.position = Vector2((extent.x - progress_extent.x) * 0.5, 62.0)
-	low_supply_label.position = Vector2((extent.x - low_supply_label.size.x) * 0.5, level_progress_strip.position.y + progress_extent.y + 12.0)
-	for panel in [research_panel, level_panel, analysis_tools_panel]:
-		panel.scale = Vector2.ONE * SIDE_PANEL_SCALE
-		panel.position = Vector2(maxf(0.0, extent.x - panel.size.x * SIDE_PANEL_SCALE), 8.0)
+	level_title_label.position = Vector2((extent.x - level_title_label.size.x) * 0.5, 22.0)
+	room_progress_label.position = Vector2((extent.x - room_progress_label.size.x) * 0.5, level_progress_strip.position.y + progress_extent.y + 4.0)
+	low_supply_label.position = Vector2((extent.x - low_supply_label.size.x) * 0.5, room_progress_label.position.y + 60.0)
+	level_panel.scale = Vector2.ONE * SIDE_PANEL_SCALE
+	level_panel.position = Vector2(maxf(0.0, extent.x - level_panel.size.x * SIDE_PANEL_SCALE), 8.0)
 	var bar_scale := minf(1.0, (extent.x - 16.0) / equipment_bar.size.x)
 	equipment_bar.scale = Vector2.ONE * bar_scale
 	var bar_extent := equipment_bar.size * bar_scale
 	equipment_bar.position = Vector2((extent.x - bar_extent.x) * 0.5, extent.y - bar_extent.y - 8.0)
-	bottom_panel.position = Vector2(maxf(0.0, (extent.x - bottom_panel.size.x) * 0.5), maxf(0.0, equipment_bar.position.y - bottom_panel.size.y - 6.0))
+	var left := depth_diagram.get_parent() as Control
+	left.size.y = maxf(290.0, (equipment_bar.position.y - left.position.y - 8.0) / SIDE_PANEL_SCALE)
+	depth_diagram.size.y = maxf(55.0, left.size.y - depth_diagram.position.y - 12.0)
+	_layout_room_controls()
+	_layout_catalogs_panel()
+
 	queue_redraw()
+
+func _layout_catalogs_panel() -> void:
+	var width := get_viewport_rect().size.x
+	var panels: Array[Control] = [map_legend_panel, catalogs_panel]
+	if level_panel.visible:
+		panels.append(level_panel)
+	var total_height := 0.0
+	for panel in panels:
+		total_height += panel.size.y
+	var panel_scale := clampf((equipment_bar.position.y - 8.0 * (panels.size() + 1)) / total_height, 0.35, SIDE_PANEL_SCALE)
+	var y := 8.0
+	for panel in panels:
+		panel.scale = Vector2.ONE * panel_scale
+		panel.position = Vector2(maxf(0.0, width - panel.size.x * panel_scale - 8.0), y)
+		y += panel.size.y * panel_scale + 8.0
 
 func _new_resource_meter(capacity: float, color: Color) -> ProgressBar:
 	var bar := ProgressBar.new()
@@ -3107,6 +3937,7 @@ func _on_new_pressed() -> void:
 	if seed_edit.text.strip_edges().is_empty():
 		parsed = int(Time.get_unix_time_from_system())
 	_new_world(parsed)
+	_save_active_profile()
 
 func _place_flora_sites() -> void:
 	flora_sites.clear()
@@ -3134,13 +3965,13 @@ func _place_flora_sites() -> void:
 	var species_ids := FLORA_SPECIES.keys()
 	for cave_id in flora_sites:
 		species_rng.seed = hash([seed_value, "flora_species_v1", cave_id])
-		flora_species_by_room[cave_id] = species_ids[species_rng.randi_range(0, species_ids.size() - 1)]
+		flora_species_by_room[cave_id] = species_ids[species_rng.randi_range(0, species_ids.size() - 2 if cave_id == first_neighbor else species_ids.size() - 1)]
 
 func _flora_is_visible() -> bool:
 	return analysis_mode and _flora_is_visible_in_room(selected_cave)
 
 func _flora_is_visible_in_room(cave_id: int) -> bool:
-	if not flora_sites.has(cave_id):
+	if not flora_sites.has(cave_id) or not _can_detect_species(flora_species_by_room.get(cave_id, "")):
 		return false
 	var plant: Vector2 = flora_sites[cave_id]
 	return analyzed_flora.has(cave_id) or _room_is_fully_lit(cave_id) or (_is_revealed(plant) and _can_use_tools_at(plant, cave_id))
@@ -3148,8 +3979,21 @@ func _flora_is_visible_in_room(cave_id: int) -> bool:
 func _room_is_fully_lit(cave_id: int) -> bool:
 	return cave_id >= 0 and (cave_id == world.get("entry", -1) or explored_caves.has(cave_id))
 
+func _has_ambient_light(point: Vector2) -> bool:
+	var cave_id := _cave_at_position(point)
+	if cave_id >= 0:
+		return _room_is_fully_lit(cave_id)
+	return _point_in_lit_gallery(point)
+
+func _update_automatic_helmet_light(point: Vector2) -> void:
+	var zone_lit := surface_mode or _has_ambient_light(point)
+	if zone_lit == helmet_light_zone_lit:
+		return
+	helmet_light_zone_lit = zone_lit
+	_set_helmet_light(not zone_lit and flashlight_charge > 0.0)
+
 func _flashlight_radius() -> float:
-	return float(world.cell_size) * (5.0 if scanner_upgraded else 4.0)
+	return float(world.cell_size) * (4.0 + _supply_tier("helmet_light") * 0.18)
 
 func _can_use_tools_at(point: Vector2, cave_id: int) -> bool:
 	if surface_mode or not analysis_mode or current_cave_id != cave_id or _cave_at_position(unit_position) != cave_id:
@@ -3218,10 +4062,12 @@ func _fauna_is_visible() -> bool:
 	return analysis_mode and _fauna_is_visible_in_room(selected_cave)
 
 func _fauna_is_visible_in_room(cave_id: int) -> bool:
-	return fauna_sites.has(cave_id) and (seen_fauna.has(cave_id) or _room_is_fully_lit(cave_id))
+	return fauna_sites.has(cave_id) and _can_detect_species(fauna_species_by_room.get(cave_id, "")) and (seen_fauna.has(cave_id) or _room_is_fully_lit(cave_id))
 
 func _detect_fauna_near_unit() -> void:
 	if not analysis_mode or current_cave_id != selected_cave or seen_fauna.has(selected_cave) or not fauna_sites.has(selected_cave):
+		return
+	if not _can_detect_species(fauna_species_by_room.get(selected_cave, "")):
 		return
 	var creature := _fauna_position(selected_cave)
 	if _can_use_tools_at(creature, selected_cave) and (_room_is_fully_lit(selected_cave) or _is_revealed(creature)):
@@ -3302,10 +4148,10 @@ func _update_bio_scan(delta: float) -> void:
 		_cancel_bio_scan()
 		status_label.text = "ESCANEIG ATURAT · IL·LUMINA LA TROBALLA"
 		return
-	var duration: float = BIO_SCAN_SECONDS[bio_scanner_tier]
+	var duration: float = _bio_scan_duration(bio_scanner_tier)
 	var elapsed := minf(delta, duration - bio_scan_elapsed)
 	var previous_integrity := ceili(bio_scanner_integrity)
-	var wear: float = elapsed * BIO_SCAN_WEAR[bio_scanner_tier] / duration
+	var wear: float = elapsed * _bio_scan_wear(bio_scanner_tier) / duration
 	var can_finish_step := wear <= bio_scanner_integrity or is_equal_approx(wear, bio_scanner_integrity)
 	bio_scanner_integrity = maxf(0.0, bio_scanner_integrity - wear)
 	bio_scan_elapsed += elapsed
@@ -3459,7 +4305,7 @@ func _add_catalog_card(species_id: String, species: Dictionary, rooms: PackedStr
 
 func _research_points() -> int:
 	var samples := _sample_totals()
-	return samples.x + samples.y + _earned_research_record_points() - int(scanner_upgraded) - int(beacon_range_upgraded)
+	return samples.x + samples.y + _earned_research_record_points() - equipment_research_spent
 
 func _sample_totals() -> Vector2i:
 	var totals := _count_samples(flora_samples) + _count_samples(fauna_samples)
@@ -3485,18 +4331,10 @@ func _earned_research_record_points() -> int:
 	return species_seen.size() + field_photos.size()
 
 func _update_research_panel() -> void:
-	research_panel.visible = surface_mode
-	research_points_label.text = "PUNTS DISPONIBLES · %d" % _research_points()
-	scanner_upgrade_button.disabled = not surface_mode or scanner_upgraded or _research_points() < 1
-	scanner_upgrade_button.text = "APLICADA" if scanner_upgraded else "MILLORA · 1 PUNT"
-	beacon_upgrade_button.disabled = not surface_mode or beacon_range_upgraded or _research_points() < 1
-	beacon_upgrade_button.text = "APLICADA" if beacon_range_upgraded else "MILLORA · 1 PUNT"
 	craft_beacon_button.disabled = not surface_mode or materials_in_pack < BEACON_CRAFT_COST
 	craft_oxygen_button.disabled = not surface_mode or materials_in_pack < OXYGEN_CRAFT_COST
-	craft_suit_button.disabled = not surface_mode or reinforced_suit or materials_in_pack < SUIT_CRAFT_COST
-	craft_beacon_button.text = "FABRICA · %d MATERIALS" % BEACON_CRAFT_COST
-	craft_oxygen_button.text = "FABRICA · %d MATERIAL" % OXYGEN_CRAFT_COST
-	craft_suit_button.text = "EQUIPAT" if reinforced_suit else "FABRICA · %d MATERIALS" % SUIT_CRAFT_COST
+	craft_beacon_button.text = "REPOSA · %d DE FERRO" % BEACON_CRAFT_COST
+	craft_oxygen_button.text = "COMPRA · %d DE FERRO" % OXYGEN_CRAFT_COST
 	_update_equipment_display()
 
 func _update_equipment_display() -> void:
@@ -3507,40 +4345,34 @@ func _update_equipment_display() -> void:
 func _update_field_equipment_buttons() -> void:
 	if not is_instance_valid(oxygen_reserve_card_button):
 		return
-	oxygen_reserve_card_button.disabled = surface_mode or oxygen_cartridges <= 0 or oxygen_seconds >= OXYGEN_CAPACITY - 1.0
+	oxygen_reserve_card_button.disabled = surface_mode or oxygen_cartridges <= 0 or oxygen_seconds >= _oxygen_capacity() - 1.0
 	use_repair_kit_button.disabled = not _can_use_repair_kit() or (suit_integrity >= 100.0 and boots_integrity >= 100.0 and mining_tool_integrity >= 100.0 and bio_scanner_integrity >= 100.0)
 	helmet_battery_card_button.disabled = not _can_replace_low_helmet_battery()
 	_update_beacon_action()
 	_layout_room_controls()
 
 func _layout_room_controls() -> void:
-	if not analysis_mode or not is_instance_valid(room_navigation_heading):
+	if not is_instance_valid(navigation_panel):
 		return
-	var y := _layout_action_group(room_navigation_heading, [map_return_button, center_explorer_button, base_return_button, lower_level_button], 76.0)
-	analysis_tools_panel.size.y = maxf(0.0, y - 10.0)
-
-func _layout_action_group(heading: Label, buttons: Array, y: float) -> float:
-	var frame: Panel = room_section_frames[heading]
-	heading.hide()
-	frame.hide()
-	for button in buttons:
-		if button.visible:
-			heading.show()
-			heading.position.y = y + 8.0
-			var end := _stack_visible_buttons(buttons, y + 30.0) + 4.0
-			frame.position.y = y
-			frame.size = Vector2(analysis_tools_panel.size.x, end - y)
-			frame.show()
-			return end + 10.0
-	return y
-
-func _stack_visible_buttons(buttons: Array, y: float) -> float:
-	for button in buttons:
-		if button.visible:
-			button.position.y = y
-			button.size.x = analysis_tools_panel.size.x - 24.0
-			y += button.size.y + 5.0
-	return y
+	navigation_panel.visible = not surface_mode
+	inspect_room_button.visible = not analysis_mode
+	fit_map_button.visible = not analysis_mode and not surface_mode
+	center_explorer_button.visible = analysis_mode
+	if not navigation_panel.visible:
+		return
+	var x := 94.0
+	for button in [map_return_button, inspect_room_button, fit_map_button, center_explorer_button, base_return_button, descend_navigation_button, lower_level_button]:
+		if not button.visible:
+			continue
+		button.position = Vector2(x, 9)
+		button.size = Vector2(172, 30)
+		x += button.size.x + 6.0
+	navigation_panel.size.x = x + 6.0
+	var viewport_width := get_viewport_rect().size.x
+	var scale := minf(1.0, (viewport_width - 16.0) / navigation_panel.size.x)
+	navigation_panel.scale = Vector2.ONE * scale
+	navigation_panel.position = Vector2((viewport_width - navigation_panel.size.x * scale) * 0.5,
+		equipment_bar.position.y - navigation_panel.size.y * scale - 8.0)
 
 func _place_material_sites(include_ladder_reserve: bool = false) -> void:
 	material_sites.clear()
@@ -3564,7 +4396,7 @@ func _place_material_sites(include_ladder_reserve: bool = false) -> void:
 		var room: int = corridor.b if corridor.a == world.entry else corridor.a
 		if material_sites.has(room) and _gallery_has_continuous_signal(corridor, -1, true):
 			nearby_deposits += 1
-	if nearby_deposits >= FOLDING_LADDER_COST:
+	if nearby_deposits >= FOLDING_LADDER_REPAIR_COST:
 		return
 	var entry: Dictionary = world.caves[world.entry]
 	for index in range(16):
@@ -3596,8 +4428,12 @@ func _collect_material() -> void:
 	if moving:
 		status_label.text = "ATURA’T PER EXTREURE EL MINERAL"
 		return
+	var mineral := _mineral_type(selected_cave)
+	if mineral != "ferro" and not _modifier_protects("mineria", mineral):
+		status_label.text = "VETA DE %s · CAL EL CAPÇAL ADEQUAT" % mineral.to_upper()
+		return
 	mining_cave = selected_cave
-	mining_remaining = MINING_SECONDS[mining_tool]
+	mining_remaining = _mining_duration(mining_tool)
 	_update_mining(0.0)
 	_update_field_equipment_buttons()
 
@@ -3620,7 +4456,7 @@ func _update_mining(delta: float) -> void:
 		return
 	var elapsed := minf(delta, mining_remaining)
 	var previous_integrity := ceili(mining_tool_integrity)
-	var wear_per_second: float = MINING_WEAR_PER_DEPOSIT[mining_tool] / MINING_SECONDS[mining_tool]
+	var wear_per_second: float = _mining_wear(mining_tool) / _mining_duration(mining_tool)
 	var wear := elapsed * wear_per_second
 	if wear > mining_tool_integrity and not is_equal_approx(wear, mining_tool_integrity):
 		mining_tool_integrity = 0.0
@@ -3638,11 +4474,16 @@ func _update_mining(delta: float) -> void:
 			_update_inventory_screen()
 		queue_redraw()
 		return
+	var mineral := _mineral_type(mining_cave)
 	collected_materials[mining_cave] = true
 	field_action_completed_until[STRIP_MINING_SLOT] = Time.get_ticks_msec() + 450
 	mining_cave = -1
-	var yield_amount := mining_tool + 1
-	materials_in_pack += yield_amount
+	var yield_amount := _mining_yield(mining_tool) + (1 if mineral != "ferro" else 0)
+	status_label.text = "+%d DE %s" % [yield_amount, mineral.to_upper()]
+	match mineral:
+		"quars": quartz_in_pack += yield_amount
+		"magnetita": magnetite_in_pack += yield_amount
+		_: materials_in_pack += yield_amount
 	_update_equipment_display()
 	queue_redraw()
 
@@ -3660,13 +4501,12 @@ func _craft_equipment(beacon: bool) -> void:
 	status_label.text = "BALISA FABRICADA" if beacon else "RESERVA D’OXIGEN FABRICADA"
 
 func _craft_reinforced_suit() -> void:
-	if not surface_mode or reinforced_suit or materials_in_pack < SUIT_CRAFT_COST:
+	if not _pay_equipment_upgrade(suit_tier):
 		return
-	materials_in_pack -= SUIT_CRAFT_COST
-	reinforced_suit = true
+	suit_tier += 1
 	suit_integrity = 100.0
 	_update_research_panel()
-	status_label.text = "VESTIT ESPACIAL REFORÇAT EQUIPAT"
+	status_label.text = "VESTIT ESPACIAL MILLORAT"
 
 func _update_suit_display() -> void:
 	if not inventory_strip_values.is_empty():
@@ -3675,10 +4515,9 @@ func _update_suit_display() -> void:
 		if inventory_strip_values[4].text != text:
 			inventory_strip_values[4].text = text
 			inventory_strip_values[4].add_theme_color_override("font_color", ORANGE if suit_integrity <= LOW_SUPPLY_PERCENT else CYAN)
-			inventory_values[4].text = text
 
 func _inventory_suit_text() -> String:
-	return "%s · %d%%" % ["Reforçat" if reinforced_suit else "Estàndard", ceili(suit_integrity)]
+	return "%s · %d%%" % ["Nv. %d" % (suit_tier + 1), ceili(suit_integrity)]
 
 func _toggle_flashlight() -> void:
 	if surface_mode:
@@ -3687,24 +4526,36 @@ func _toggle_flashlight() -> void:
 		if flashlight_spares <= 0:
 			return
 		flashlight_spares -= 1
-		flashlight_charge = FLASHLIGHT_BATTERY_SECONDS
-	flashlight_on = not flashlight_on
+		flashlight_charge = _helmet_battery_duration()
+	_set_helmet_light(not flashlight_on)
+
+func _set_helmet_light(enabled: bool) -> void:
+	if flashlight_on == enabled:
+		return
+	flashlight_on = enabled
 	if flashlight_on:
 		if light_warning_tween and light_warning_tween.is_valid():
 			light_warning_tween.kill()
 		light_warning_label.hide()
 		_set_light_warning_strength(0.0)
 	if flashlight_on and _cave_at_position(unit_position) >= 0:
-		_reveal_around(unit_position, 5 if scanner_upgraded else 4)
+		_reveal_around(unit_position, 4 + floori(float(_supply_tier("helmet_light")) / 3.0))
 	_update_field_equipment_buttons()
 	_update_inventory_screen()
 	queue_redraw()
 
+func _oxygen_capacity() -> float:
+	return OXYGEN_CAPACITY + _supply_bonus("oxygen_tank")
+
+func _helmet_battery_duration() -> float:
+	return FLASHLIGHT_BATTERY_SECONDS + _supply_bonus("helmet_light")
+
 func _flashlight_charge_percent() -> int:
-	return ceili(flashlight_charge * 100.0 / FLASHLIGHT_BATTERY_SECONDS)
+	return ceili(flashlight_charge * 100.0 / _helmet_battery_duration())
 
 func _draw_low_supply_card(card: PanelContainer, slot: int) -> void:
-	if not warned_low_supplies.has(slot):
+	var active := repair_kit_urgent if slot == 10 else warned_low_supplies.has(slot)
+	if not active:
 		return
 	var pulse := 0.5 + 0.5 * cos(float(Time.get_ticks_msec()) * TAU / 900.0)
 	var bounds := Rect2(Vector2(2, 2), card.size - Vector2(4, 4))
@@ -3714,17 +4565,19 @@ func _draw_low_supply_card(card: PanelContainer, slot: int) -> void:
 func _update_low_supply_warning(delta: float) -> void:
 	if not is_instance_valid(low_supply_label):
 		return
-	var repair := "Fes servir la caixa d’eines" if repair_kits > 0 else "Repara-ho al taller"
+	var repair := "Fes servir la caixa d’eines" if _repair_kit_uses_left() > 0 else "Repara-ho al taller"
 	var supplies := [
-		["Oxigen", oxygen_seconds * 100.0 / OXYGEN_CAPACITY, "Clica Reserves dins del dipòsit" if oxygen_cartridges > 0 else "Torna a la base a recarregar"],
-		["Bateria del casc", flashlight_charge * 100.0 / FLASHLIGHT_BATTERY_SECONDS, "Clica Bateries dins de Llum del casc" if flashlight_spares > 0 else "Sense recanvi"],
+		["Oxigen", oxygen_seconds * 100.0 / _oxygen_capacity(), "Clica Reserves dins del dipòsit" if oxygen_cartridges > 0 else "Torna a la base a recarregar"],
+		["Bateria del casc", flashlight_charge * 100.0 / _helmet_battery_duration(), "Clica Bateries dins de Llum del casc" if flashlight_spares > 0 else "Sense recanvi"],
 		["Vestit espacial", suit_integrity, repair],
 		["Botes", boots_integrity, repair],
 		["Eina de mineria", mining_tool_integrity, repair],
-		["Escàner biològic", bio_scanner_integrity, repair]]
+		["Escàner biològic", bio_scanner_integrity, repair],
+		["Caixa d’eines", _repair_kit_uses_percent(), "Reposa els usos al taller"]]
 	var lines := PackedStringArray()
 	var new_warning := false
-	var slots := [STRIP_OXYGEN_SLOT, 5, 4, 9, STRIP_MINING_SLOT, STRIP_BIO_SCANNER_SLOT]
+	var equipment_low := false
+	var slots := [STRIP_OXYGEN_SLOT, 5, 4, 9, STRIP_MINING_SLOT, STRIP_BIO_SCANNER_SLOT, 10]
 	for index in range(supplies.size()):
 		var supply: Array = supplies[index]
 		var slot: int = slots[index]
@@ -3732,8 +4585,11 @@ func _update_low_supply_warning(delta: float) -> void:
 		var remaining := float(supply[1])
 		var was_low := warned_low_supplies.has(slot)
 		var is_low := remaining < LOW_SUPPLY_PERCENT
+		if slot in [4, 9, STRIP_MINING_SLOT, STRIP_BIO_SCANNER_SLOT]:
+			equipment_low = equipment_low or is_low
 		if was_low or is_low:
-			inventory_strip_meters[slot].get_parent().get_parent().queue_redraw()
+			if slot != 10:
+				inventory_strip_meters[slot].get_parent().get_parent().queue_redraw()
 		if not is_low:
 			warned_low_supplies.erase(slot)
 			continue
@@ -3741,6 +4597,11 @@ func _update_low_supply_warning(delta: float) -> void:
 			warned_low_supplies[slot] = true
 			new_warning = true
 		lines.append("%s · %d%% · %s" % [title, floori(remaining), supply[2]])
+	var kit_should_pulse := equipment_low and _repair_kit_uses_left() > 0
+	if kit_should_pulse or repair_kit_urgent != kit_should_pulse:
+		resource_gain_cards[10].queue_redraw()
+		repair_kit_footer.queue_redraw()
+	repair_kit_urgent = kit_should_pulse
 	low_supply_warning_time = 5.0 if new_warning else maxf(0.0, low_supply_warning_time - delta)
 	low_supply_label.visible = low_supply_warning_time > 0.0 and not lines.is_empty()
 	if low_supply_label.visible:
@@ -3758,7 +4619,7 @@ func _replace_low_helmet_battery() -> void:
 		_toggle_flashlight()
 	else:
 		flashlight_spares -= 1
-		flashlight_charge = FLASHLIGHT_BATTERY_SECONDS
+		flashlight_charge = _helmet_battery_duration()
 		_update_equipment_display()
 	status_label.text = "BATERIA DEL CASC SUBSTITUÏDA"
 
@@ -3775,23 +4636,16 @@ func _update_flashlight_charge(delta: float) -> void:
 		_update_inventory_screen()
 
 func _use_oxygen_cartridge() -> void:
-	if surface_mode or oxygen_cartridges <= 0 or oxygen_seconds >= OXYGEN_CAPACITY - 1.0:
+	if surface_mode or oxygen_cartridges <= 0 or oxygen_seconds >= _oxygen_capacity() - 1.0:
 		return
 	oxygen_cartridges -= 1
-	oxygen_seconds = minf(OXYGEN_CAPACITY, oxygen_seconds + OXYGEN_CARTRIDGE_SECONDS)
+	oxygen_seconds = minf(_oxygen_capacity(), oxygen_seconds + OXYGEN_CARTRIDGE_SECONDS + _supply_bonus("oxygen_reserve"))
 	_update_oxygen_display()
 	_update_equipment_display()
 	status_label.text = "RESERVA D’OXIGEN UTILITZADA"
 
-func _upgrade_beacon_range() -> void:
-	if not surface_mode or beacon_range_upgraded or _research_points() < 1:
-		return
-	beacon_range_upgraded = true
-	_update_research_panel()
-	_update_beacon_status()
-
 func _beacon_range() -> float:
-	return BEACON_RANGE + (BEACON_RANGE_UPGRADE if beacon_range_upgraded else 0.0)
+	return BEACON_RANGE + _supply_bonus("beacon")
 
 func _signal_sources(excluded_beacon: int = -1) -> PackedVector2Array:
 	var sources := PackedVector2Array([world.caves[world.entry].position])
@@ -3883,6 +4737,10 @@ func _register_beacon_use(destination: int) -> void:
 		if not used_beacons.has(cave_id) and not _can_enter_room_with_signal(destination, -1, current_cave_id, false, cave_id):
 			used_beacons[cave_id] = true
 
+func _is_gallery_exit_accessible(corridor: Dictionary, room_id: int) -> bool:
+	var destination: int = corridor.b if corridor.a == room_id else corridor.a
+	return _can_enter_room_with_signal(destination, corridor.id, room_id, false)
+
 func _update_beacon_status() -> void:
 	if not is_instance_valid(beacon_signal_meter) or world.is_empty():
 		return
@@ -3891,12 +4749,25 @@ func _update_beacon_status() -> void:
 		distance = minf(distance, unit_position.distance_to(center))
 	var strength := 100 if surface_mode else ceili(clampf(1.0 - distance / _beacon_range(), 0.0, 1.0) * 100.0)
 	beacon_signal_meter.value = strength
-	beacon_signal_label.text = "Senyal · %d%%" % strength
+	inventory_strip_values[1].text = "Nv. %d · %d%%" % [_supply_tier("beacon") + 1, strength]
+	if level_panel.visible:
+		var room_id := selected_cave if analysis_mode else current_cave_id
+		var exits := _visible_exits_for_cave(room_id)
+		var accessible := 0
+		for exit_info in exits:
+			var gallery := _corridor_by_id(exit_info.corridor_id)
+			if _is_gallery_exit_accessible(gallery, room_id):
+				accessible += 1
+		exit_count_label.text = str(accessible)
+		blocked_exit_count_label.text = str(exits.size() - accessible)
 	_update_beacon_action()
 
 func _update_beacon_action() -> void:
 	var cave_id := _beacon_action_room()
+	var was_disabled := beacon_card_button.disabled
 	beacon_card_button.disabled = not (_can_deploy_beacon() or _can_recover_beacon())
+	if was_disabled != beacon_card_button.disabled:
+		beacon_footer.queue_redraw()
 	var action_label := "COL·LOCA BALISA"
 	if deployed_beacons.has(cave_id):
 		action_label = "BALISA EN ÚS" if used_beacons.has(cave_id) else "RECULL BALISA"
@@ -3921,13 +4792,6 @@ func _deploy_beacon() -> void:
 	status_label.text = "BALISA INSTAL·LADA"
 	queue_redraw()
 
-func _upgrade_scanner() -> void:
-	if not surface_mode or scanner_upgraded or _research_points() < 1:
-		return
-	scanner_upgraded = true
-	_update_research_panel()
-	status_label.text = "ABAST DE DESCOBERTA AMPLIAT"
-
 func _draw_flora_symbol(canvas: CanvasItem, base: Vector2, scale: float, species_id: String = "falguera") -> void:
 	var is_coral := species_id == "coral"
 	var glow := Color("dea6ff") if is_coral else Color("a1f8b0")
@@ -3943,9 +4807,10 @@ func _draw_flora_symbol(canvas: CanvasItem, base: Vector2, scale: float, species
 		canvas.draw_circle(end, 4.0 * scale, Color(glow, 0.2), true, -1.0, true)
 		canvas.draw_circle(end, 2.1 * scale, glow, true, -1.0, true)
 
-func _draw_fauna_map_badge(canvas: CanvasItem, center: Vector2, species_id: String = "escarabat", icon_scale: float = 1.0) -> void:
-	canvas.draw_circle(center, 9.0 * icon_scale, PANEL, true, -1.0, true)
-	canvas.draw_circle(center, 9.0 * icon_scale, Color("cba9ff"), false, 1.4, true)
+func _draw_fauna_map_badge(canvas: CanvasItem, center: Vector2, species_id: String = "escarabat", icon_scale: float = 1.0, show_ring: bool = true) -> void:
+	if show_ring:
+		canvas.draw_circle(center, 9.0 * icon_scale, PANEL, true, -1.0, true)
+		canvas.draw_circle(center, 9.0 * icon_scale, Color("cba9ff"), false, 1.4, true)
 	if species_id == "isopode":
 		for index in range(-1, 2):
 			canvas.draw_circle(center + Vector2(0, index * 3) * icon_scale, 3.2 * icon_scale, Color("a6c8ef") if index % 2 == 0 else Color("7199c0"), true, -1.0, true)
@@ -4007,6 +4872,7 @@ func _change_underground_level(destination: int, arrival: int) -> void:
 		_place_fauna_sites()
 		_place_material_sites()
 		descent_access = _pick_descent_access() if destination < OXIDIZED_CAVES_DEPTH else -1
+		_assign_mineral_types(destination)
 		seed_value = original_seed
 	current_level = destination
 	current_cave_id = world.entry if arrival < 0 else arrival
@@ -4017,7 +4883,7 @@ func _change_underground_level(destination: int, arrival: int) -> void:
 	selected_cave_focus = unit_position
 	move_target = unit_position
 	moving = false
-	returning_to_base = false
+	level_navigation_target = -1
 	move_path.clear()
 	selected_route.clear()
 	chained_cave_id = -1
@@ -4035,15 +4901,16 @@ func _change_underground_level(destination: int, arrival: int) -> void:
 	_update_map_stats()
 	_update_view_mode_ui()
 	queue_redraw()
+	_save_active_profile()
 
 func _descend_to_lower_level() -> void:
 	if not _can_descend_to_lower_level():
 		return
 	if _is_unopened_shaft(descent_access):
-		if folding_ladders <= 0:
-			status_label.text = "CAL UNA ESCALA PLEGABLE · DISPONIBLE A LA BASE"
+		if _ladder_uses_left() <= 0:
+			status_label.text = "ESCALA ESGOTADA · REPARA-LA A LA BASE"
 			return
-		folding_ladders -= 1
+		ladder_uses_spent += 1
 	_change_underground_level(current_level + 1, -1)
 
 func _can_descend_to_lower_level() -> bool:
@@ -4052,6 +4919,12 @@ func _can_descend_to_lower_level() -> bool:
 	return _has_descent_elevator(descent_access) and analysis_mode and selected_cave == descent_access and current_cave_id == descent_access and not moving and _cave_at_position(unit_position) == descent_access and unit_position.distance_to(world.caves[descent_access].position) <= 42.0
 
 func _new_world(value: int, keep_dropped_materials: bool = false) -> void:
+	depth_trip_target = -1
+	owned_modifiers.clear()
+	equipped_modifiers.clear()
+	equipment_research_spent = 0
+	supply_tiers.clear()
+	ladder_uses_spent = 0
 	rockfall_clear_remaining = 0.0
 	health = 100.0
 	medkits = 1
@@ -4060,7 +4933,6 @@ func _new_world(value: int, keep_dropped_materials: bool = false) -> void:
 	rockfall_corridor_id = -1
 	if not keep_dropped_materials:
 		dropped_materials.clear()
-	folding_ladders = STARTING_FOLDING_LADDERS
 	for card in resource_gain_cards.values():
 		card.queue_redraw()
 	resource_gains.clear()
@@ -4074,13 +4946,12 @@ func _new_world(value: int, keep_dropped_materials: bool = false) -> void:
 	_cancel_mining()
 	_cancel_bio_scan()
 	inactive_levels.clear()
-	returning_to_base = false
-	oxygen_seconds = OXYGEN_CAPACITY
+	level_navigation_target = -1
+	oxygen_seconds = _oxygen_capacity()
 	walked_gallery_spans.clear()
 	completed_gallery_traces.clear()
 	deployed_beacons.clear()
 	used_beacons.clear()
-	beacon_range_upgraded = false
 	seed_value = value
 	var start_time := Time.get_ticks_msec()
 	world = Generator.generate(seed_value)
@@ -4088,19 +4959,22 @@ func _new_world(value: int, keep_dropped_materials: bool = false) -> void:
 	_place_flora_sites()
 	_place_fauna_sites()
 	_place_material_sites(true)
+	_assign_mineral_types(1)
 	collected_materials.clear()
 	materials_in_pack = 0
+	quartz_in_pack = 0
+	magnetite_in_pack = 0
 	crafted_beacons = 0
 	oxygen_cartridges = 0
 	flashlight_on = false
-	flashlight_charge = FLASHLIGHT_BATTERY_SECONDS
+	flashlight_charge = _helmet_battery_duration()
 	flashlight_spares = FLASHLIGHT_SPARE_BATTERIES
 	suit_integrity = 100.0
-	reinforced_suit = false
+	suit_tier = 0
 	mining_tool = 0
 	mining_tool_integrity = 100.0
 	equipped_boots = 0
-	repair_kits = 0
+	repair_kit_uses_spent = 0
 	boots_integrity = 100.0
 	analyzed_flora.clear()
 	analyzed_fauna.clear()
@@ -4111,7 +4985,6 @@ func _new_world(value: int, keep_dropped_materials: bool = false) -> void:
 	fauna_samples.clear()
 	bio_scanner_tier = 0
 	bio_scanner_integrity = 100.0
-	scanner_upgraded = false
 	selected_flora = -1
 	var elapsed := Time.get_ticks_msec() - start_time
 	selected_cave = -1
@@ -4168,6 +5041,7 @@ func _descend_to_level_one() -> void:
 	_focus_world_position(unit_position, zoom_level)
 	_update_view_mode_ui()
 	queue_redraw()
+	_save_active_profile()
 
 func _on_overlay_toggled(value: bool, overlay: String) -> void:
 	match overlay:
@@ -4188,32 +5062,17 @@ func _update_map_stats() -> void:
 		return
 	var scanned_count := explored_caves.size()
 	cave_count_label.text = "%d / %d" % [scanned_count, world.caves.size()] if dev_mode else str(scanned_count)
-	access_heading_label.text = "CONNEXIONS" if dev_mode else "SORTIDES"
-	exit_count_label.text = str(_exit_count(current_cave_id))
 	_update_level_progress()
 	_update_beacon_status()
 
 func _update_level_progress() -> void:
 	if not is_instance_valid(level_progress_strip) or world.is_empty():
 		return
-	var rooms := Vector2i(explored_caves.size(), world.caves.size())
-	var galleries := Vector2i(completed_gallery_traces.size(), world.corridors.size())
-	var flora := Vector2i(analyzed_flora.size(), flora_sites.size())
-	var fauna := Vector2i(analyzed_fauna.size(), fauna_sites.size())
-	var minerals := Vector2i(0, material_sites.size())
-	for cave_id in material_sites:
-		if _mineral_site_discovered(cave_id):
-			minerals.x += 1
-	var total := 0.0
-	var categories := 0
-	for count in [rooms, galleries, flora, fauna]:
-		if count.y > 0:
-			total += float(count.x) / float(count.y)
-			categories += 1
-	var overall := 100.0 * total / maxf(1.0, categories)
+	var counts := _depth_discovery_counts(_level_snapshot())
+	var overall := _overall_discovery(counts)
 	level_progress_values[0].text = "%d%%" % floori(overall)
 	level_progress_meters[0].value = overall
-	var counts := [rooms, galleries, flora, fauna, minerals]
+	_refresh_depth_selector()
 	for index in range(counts.size()):
 		var count: Vector2i = counts[index]
 		level_progress_values[index + 1].text = _discovery_percentage(count)
@@ -4225,7 +5084,7 @@ func _discovery_percentage(count: Vector2i) -> String:
 	return "%d%%" % floori(100.0 * float(count.x) / float(count.y))
 
 func _input(event: InputEvent) -> void:
-	if death_dialog.visible:
+	if death_dialog.visible or profiles_dialog.visible or depth_trip_dialog.visible or restart_run_dialog.visible:
 		return
 	if surface_mode:
 		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and not _over_ui(event.position):
@@ -4263,7 +5122,8 @@ func _input(event: InputEvent) -> void:
 				var corridor_id := int(order.get("corridor_id", -1))
 				if corridor_id < 0 and int(order.cave_id) >= 0:
 					corridor_id = _known_exit_corridor(_screen_to_world(event.position))
-				if corridor_id >= 0 and not flashlight_on and not _gallery_has_lamps(_corridor_by_id(corridor_id)):
+				var can_light_gallery := flashlight_on or (helmet_light_zone_lit and flashlight_charge > 0.0)
+				if corridor_id >= 0 and not can_light_gallery and not _gallery_has_lamps(_corridor_by_id(corridor_id)):
 					_show_light_warning(event.position, "GALERIA A LES FOSQUES")
 					return
 				if order.has("explore_room") and not flashlight_on and not _room_is_fully_lit(selected_cave) and not _is_revealed(clicked_point):
@@ -4277,7 +5137,8 @@ func _input(event: InputEvent) -> void:
 					if rockfall_warned and not analysis_mode:
 						return
 					use_elevator_on_arrival = false
-					returning_to_base = false
+					level_navigation_target = -1
+					depth_trip_target = -1
 					inspection_destination_cave_id = int(order.get("inspection_cave_id", -1))
 					inspect_on_cave_arrival = inspection_destination_cave_id >= 0 and (not analysis_mode or bool(order.get("room_click", false)))
 					inspection_corridor_id = int(order.get("corridor_id", -1)) if analysis_mode else -1
@@ -4331,7 +5192,7 @@ func _input(event: InputEvent) -> void:
 func _zoom_at(screen_position: Vector2, factor: float) -> void:
 	center_map_during_move = false
 	var before := _screen_to_world(screen_position)
-	zoom_level = clampf(zoom_level * factor, 0.28 if analysis_mode else MAP_MIN_ZOOM, 8.0)
+	zoom_level = clampf(zoom_level * factor, 0.28 if analysis_mode else minf(zoom_level, MAP_MIN_ZOOM), 8.0)
 	var projected_after := _world_to_screen(before)
 	camera_offset += screen_position - projected_after
 	queue_redraw()
@@ -4372,24 +5233,25 @@ func _select_cave(screen_position: Vector2) -> void:
 	if nearest >= 0:
 		_inspect_map_room(nearest, nearest_focus)
 
-func _inspect_map_room(cave_id: int, focus: Vector2) -> void:
+func _inspect_map_room(cave_id: int, focus: Vector2, zoom_factor: float = 1.0) -> void:
 	selected_cave = cave_id
 	selected_cave_focus = focus
 	center_map_during_move = false
 	analysis_mode = true
 	selected_route.clear()
+	zoom_level = _analysis_zoom_for_cave(cave_id) * zoom_factor
 	_update_view_mode_ui()
-	_focus_world_position(focus, _analysis_zoom_for_cave(cave_id))
+	_focus_world_position(focus, zoom_level)
 
 func _can_inspect_cave(cave_id: int) -> bool:
 	return visited_caves.has(cave_id) or explored_caves.has(cave_id)
 
 func _focus_selected_cave() -> void:
-	if selected_cave < 0 or selected_cave >= world.caves.size() or not _can_inspect_cave(selected_cave):
+	var occupied_cave := _cave_at_position(unit_position)
+	if occupied_cave >= 0:
+		_inspect_map_room(occupied_cave, unit_position, 0.8)
 		return
-	analysis_mode = true
-	_update_view_mode_ui()
-	_focus_world_position(world.caves[selected_cave].position, _analysis_zoom_for_cave(selected_cave))
+	status_label.text = "ARRIBA A UNA SALA PER INSPECCIONAR-LA"
 
 func _focus_cave(cave_id: int, requested_zoom: float) -> void:
 	if cave_id < 0 or cave_id >= world.caves.size():
@@ -4401,7 +5263,6 @@ func _center_isometric_explorer() -> void:
 		return
 	dragging = false
 	if selected_cave != current_cave_id:
-		zoom_level = _analysis_zoom_for_cave(current_cave_id)
 		_inspect_map_room(current_cave_id, unit_position)
 	else:
 		_focus_world_position(unit_position, zoom_level)
@@ -4424,7 +5285,7 @@ func _analysis_zoom_for_cave(cave_id: int) -> float:
 	bounds = Rect2(_iso_project_relative(cave.position + contour[0], cave.position), Vector2.ZERO)
 	for point in contour:
 		bounds = bounds.expand(_iso_project_relative(cave.position + point, cave.position))
-	var available_size := _view_rect().size * Vector2(0.84, 0.84)
+	var available_size := _view_rect().size * Vector2(0.72, 0.76)
 	var horizontal_fit := available_size.x / maxf(bounds.size.x, 1.0)
 	var vertical_fit := available_size.y / maxf(bounds.size.y, 1.0)
 	return clampf(minf(horizontal_fit, vertical_fit), ANALYSIS_MIN_ZOOM, ANALYSIS_MAX_ZOOM) * ANALYSIS_ENTRY_ZOOM_FACTOR
@@ -4433,7 +5294,6 @@ func _update_view_mode_ui() -> void:
 	if not is_instance_valid(mode_heading_label):
 		return
 	_update_oxygen_display()
-	_update_beacon_status()
 	base_catalog_button.show()
 	_update_research_panel()
 	if surface_mode:
@@ -4465,34 +5325,47 @@ func _update_view_mode_ui() -> void:
 		map_return_button.visible = false
 		descend_button.visible = false
 	if is_instance_valid(level_panel):
-		level_panel.visible = not analysis_mode and not surface_mode
+		level_panel.visible = not surface_mode
+		map_options_section.visible = not analysis_mode
+		level_panel.size.y = 54.0 if analysis_mode else 132.0
 		level_progress_strip.visible = not surface_mode
-	if is_instance_valid(bottom_panel):
-		bottom_panel.visible = not analysis_mode and not surface_mode
-	if is_instance_valid(analysis_tools_panel):
-		analysis_tools_panel.visible = analysis_mode and not surface_mode
-		_update_flora_button()
+	_update_beacon_status()
+	level_title_label.visible = not surface_mode
+	_layout_panels.call_deferred()
+	if not surface_mode:
+		var zone_start := 1 + floori(float(current_level - 1) / 3.0) * 3
+		var zone: String = DEPTH_ZONE_NAMES.get(current_level, DEPTH_ZONE_NAMES.get(zone_start, OXIDIZED_CAVES_NAME))
+		level_title_label.text = "%s · Nivell −%d" % [zone, current_level]
+	_update_flora_button()
+	_layout_catalogs_panel()
+	_refresh_depth_selector()
 	_refresh_room_progress()
 	if is_instance_valid(base_return_button):
 		base_return_button.visible = not surface_mode and current_level > 0
 		_update_base_return_availability()
 
+func _hud_room_id() -> int:
+	return selected_cave if analysis_mode else _cave_at_position(unit_position)
+
 func _refresh_room_progress() -> void:
-	if is_instance_valid(depth_diagram):
-		depth_diagram.queue_redraw()
 	if not is_instance_valid(room_progress_label):
 		return
-	room_progress_label.visible = analysis_mode and not surface_mode and selected_cave >= 0 and selected_cave < world.caves.size()
+	var cave_id := -1 if surface_mode or world.is_empty() else _hud_room_id()
+	room_progress_label.visible = not surface_mode and (cave_id >= 0 or moving)
 	room_progress_label.queue_redraw()
 	if not room_progress_label.visible:
 		return
-	if (inspection_corridor_id >= 0 or (moving and inspect_on_cave_arrival)) and _cave_at_position(unit_position) < 0:
+	if cave_id < 0 or (analysis_mode and moving and _cave_at_position(unit_position) < 0):
 		room_progress_label.text = "GALERIA"
 		return
-	if explored_caves.has(selected_cave):
-		room_progress_label.text = "SALA · 100%"
-	else:
-		room_progress_label.text = "SALA · %d%%" % floori(_room_reveal_ratio(world.caves[selected_cave]) * 100.0)
+	var environment := _room_environment(cave_id)
+	var title := "SALA"
+	match environment:
+		"aigua": title = "SALA INUNDADA"
+		"gel": title = "SALA GELADA"
+		"calent": title = "SALA CALENTA"
+	var explored_percent := 100 if explored_caves.has(cave_id) else floori(_room_reveal_ratio(world.caves[cave_id]) * 100.0)
+	room_progress_label.text = "%s %02d · %d%% ESCANEJAT" % [title, cave_id + 1, explored_percent]
 
 func _return_to_map(requested_zoom: float = 0.62) -> void:
 	isometric_passage_id = -1
@@ -4532,16 +5405,26 @@ func _expedition_emergency() -> String:
 
 func _end_expedition(reason: String) -> void:
 	death_dialog.dialog_text = "%s\n\nL’explorador ha mort. Tornaràs a començar a la superfície amb l’equip inicial." % reason
-	if materials_in_pack > 0:
-		dropped_materials.append({"level": current_level, "position": unit_position, "amount": materials_in_pack})
-		death_dialog.dialog_text += "\n\nMaterials abandonats al nivell %d: %d. Busca la caixa taronja quan tornis al lloc de l’incident." % [-current_level, materials_in_pack]
+	var total_materials := materials_in_pack + quartz_in_pack + magnetite_in_pack
+	if total_materials > 0:
+		dropped_materials.append({"level": current_level, "position": unit_position, "amount": materials_in_pack,
+			"quartz": quartz_in_pack, "magnetite": magnetite_in_pack})
+		death_dialog.dialog_text += "\n\nMaterials abandonats al nivell %d: %d. Busca la caixa taronja al lloc de l’incident." % [-current_level, total_materials]
 		materials_in_pack = 0
+		quartz_in_pack = 0
+		magnetite_in_pack = 0
 	death_dialog.popup_centered(Vector2i(440, 0))
+	_save_active_profile()
 
 func _restart_after_death() -> void:
 	if not dropped_materials.is_empty():
 		_new_world(seed_value, true)
+		_save_active_profile()
 		return
+	_start_run_with_new_seed()
+	_save_active_profile()
+
+func _start_run_with_new_seed() -> void:
 	var next_seed := randi_range(0, 0x7fffffff)
 	if next_seed == seed_value:
 		next_seed = (seed_value + 1) & 0x7fffffff
@@ -4561,8 +5444,10 @@ func _recover_dropped_materials(screen_position: Vector2) -> bool:
 			return true
 		dropped_materials.remove_at(index)
 		materials_in_pack += int(cargo.amount)
+		quartz_in_pack += int(cargo.get("quartz", 0))
+		magnetite_in_pack += int(cargo.get("magnetite", 0))
 		_update_equipment_display()
-		status_label.text = "MATERIALS RECUPERATS · +%d" % cargo.amount
+		status_label.text = "MATERIALS RECUPERATS · +%d" % (int(cargo.amount) + int(cargo.get("quartz", 0)) + int(cargo.get("magnetite", 0)))
 		queue_redraw()
 		return true
 	return false
@@ -4570,6 +5455,7 @@ func _recover_dropped_materials(screen_position: Vector2) -> bool:
 func _enter_surface_base() -> void:
 	rockfall_clear_remaining = 0.0
 	flashlight_on = false
+	helmet_light_zone_lit = true
 	surface_mode = true
 	current_level = 0
 	analysis_mode = false
@@ -4582,46 +5468,199 @@ func _enter_surface_base() -> void:
 	_update_view_mode_ui()
 	_update_equipment_display()
 	queue_redraw()
+	_save_active_profile()
 
 func _update_oxygen_display() -> void:
 	if not inventory_strip_meters.has(STRIP_OXYGEN_SLOT):
 		return
-	var ratio := oxygen_seconds / OXYGEN_CAPACITY
+	var ratio := oxygen_seconds / _oxygen_capacity()
 	inventory_strip_meters[STRIP_OXYGEN_SLOT].value = ratio * 100.0
 	var label := inventory_strip_values[STRIP_OXYGEN_SLOT]
 	var percent := ceili(ratio * 100.0)
-	var caption := "%d%%" % percent
+	var caption := "Nv. %d · %d%%" % [_supply_tier("oxygen_tank") + 1, percent]
 	if label.text != caption:
 		label.text = caption
 		label.add_theme_color_override("font_color", ORANGE if percent <= LOW_SUPPLY_PERCENT else CYAN)
-func _start_return_to_base() -> void:
-	if surface_mode or returning_to_base or world.is_empty() or mining_cave >= 0 or bio_scan_room >= 0:
+func _request_depth_trip(destination: int) -> void:
+	if destination == current_level:
 		return
-	if _cave_at_position(unit_position) == world.entry:
-		if analysis_mode and selected_cave == world.entry and not _can_use_selected_level_access():
-			_approach_level_access()
+	if destination > OXIDIZED_CAVES_DEPTH:
+		status_label.text = "NIVELL −%d ENCARA NO DISPONIBLE" % destination
+		return
+	if mining_cave >= 0 or bio_scan_room >= 0 or rockfall_clear_remaining > 0.0 or level_navigation_target >= 0:
+		status_label.text = "ACABA L’ACCIÓ EN CURS ABANS DE CANVIAR DE NIVELL"
+		return
+	var going_down := destination > current_level
+	var depth := maxi(1, current_level)
+	var origin := current_cave_id if current_level > 0 else int(world.entry)
+	var distance := 0.0
+	var suit_wear := 0.0
+	var ladders_needed := 0
+	var rockfall_on_route := false
+	while depth != destination and depth > 0:
+		var state := _depth_state(depth)
+		var target: int = state.descent_access if going_down else state.world.entry
+		if going_down and not state.explored_caves.has(target):
+			status_label.text = "PRIMER HAS DE DESCOBRIR L’ACCÉS AL NIVELL −%d" % (depth + 1)
 			return
-		moving = false
-		_finish_return_to_entry()
+		var leg := _known_depth_leg(state, origin, target)
+		if leg.is_empty():
+			status_label.text = "CAP RUTA PER GALERIES RECORREGUDES FINS A L’ACCÉS"
+			return
+		var leg_distance: float = leg.distance
+		if depth == current_level:
+			leg_distance += unit_position.distance_to(state.world.caves[origin].position)
+		distance += leg_distance
+		var seconds := leg_distance / maxf(1.0, _boots_speed(equipped_boots) * 0.7 * 0.75)
+		var pressure: float = [0.0, 0.03, 0.10, 0.15][depth]
+		suit_wear += seconds * (pressure * (1.0 - float(suit_tier) * 0.04) + (0.06 if depth >= 2 else 0.0))
+		rockfall_on_route = rockfall_on_route or bool(leg.blocked)
+		depth += 1 if going_down else -1
+		if depth <= 0:
+			break
+		var next := _depth_state(depth)
+		if next.is_empty():
+			ladders_needed += 1
+			if depth != destination:
+				status_label.text = "PRIMER HAS D’EXPLORAR EL NIVELL −%d" % depth
+				return
+			break
+		origin = int(next.world.entry if going_down else next.descent_access)
+	if ladders_needed > _ladder_uses_left():
+		status_label.text = "ESCALA ESGOTADA · REPARA-LA A LA BASE"
 		return
-	var entrance: Vector2 = world.caves[world.entry].position
+	var warnings := PackedStringArray()
+	var travel_seconds := distance / maxf(1.0, _boots_speed(equipped_boots) * 0.7 * 0.75)
+	var available_oxygen := oxygen_seconds + oxygen_cartridges * (OXYGEN_CARTRIDGE_SECONDS + _supply_bonus("oxygen_reserve"))
+	if travel_seconds > 0.0 and travel_seconds + 15.0 >= available_oxygen:
+		warnings.append("L’oxigen i les reserves podrien esgotar-se durant el trajecte.")
+	if distance > 0.0 and distance * BOOT_WEAR_PER_UNIT * 1.8 >= boots_integrity:
+		warnings.append("Les botes es podrien trencar abans d’arribar.")
+	if suit_wear > 0.0 and suit_wear >= suit_integrity:
+		warnings.append("El vestit podria esgotar-se abans d’arribar.")
+	if not surface_mode and flashlight_charge <= 0.0 and flashlight_spares <= 0 and not _room_is_fully_lit(_cave_at_position(unit_position)) and not _point_in_lit_gallery(unit_position):
+		warnings.append("Ets en una zona fosca i no tens bateria ni recanvis per al llum del casc.")
+	if rockfall_on_route:
+		warnings.append("Hi ha un despreniment pel camí. Hauràs de retirar les roques.")
+	_confirm_depth_action(destination, _begin_depth_trip.bind(destination), warnings)
+
+func _confirm_depth_action(destination: int, action: Callable, warnings: PackedStringArray = PackedStringArray()) -> void:
+	var message := "Vols tornar a la base?"
+	if destination > 0:
+		var direction := "pujar" if destination < current_level else "baixar"
+		message = "Vols %s al nivell −%d?" % [direction, destination]
+	if not warnings.is_empty():
+		message += "\n\n" + "\n\n".join(warnings)
+	pending_depth_action = action
+	depth_trip_dialog.dialog_text = message
+	depth_trip_dialog.popup_centered(Vector2i(450, 0))
+
+func _known_depth_leg(state: Dictionary, source: int, target: int) -> Dictionary:
+	var caves: Array = state.world.caves
+	if source < 0 or target < 0 or source >= caves.size() or target >= caves.size():
+		return {}
+	var distances := {source: 0.0}
+	var blocked := {source: false}
+	var frontier: Array[int] = [source]
+	while not frontier.is_empty():
+		var nearest := 0
+		for index in range(1, frontier.size()):
+			if distances[frontier[index]] < distances[frontier[nearest]]:
+				nearest = index
+		var room: int = frontier.pop_at(nearest)
+		if room == target:
+			return {"distance": distances[room], "blocked": blocked[room]}
+		for corridor in state.world.corridors:
+			if not state.completed_gallery_traces.has(corridor.id) or (corridor.a != room and corridor.b != room):
+				continue
+			var neighbor: int = corridor.b if corridor.a == room else corridor.a
+			var points: PackedVector2Array = corridor.points
+			var length := 0.0
+			for index in range(1, points.size()):
+				length += points[index - 1].distance_to(points[index])
+			var candidate: float = distances[room] + maxf(length, caves[room].position.distance_to(caves[neighbor].position)) * 1.2
+			if candidate >= float(distances.get(neighbor, INF)):
+				continue
+			distances[neighbor] = candidate
+			blocked[neighbor] = blocked[room] or corridor.id == state.rockfall_corridor_id
+			if not frontier.has(neighbor):
+				frontier.append(neighbor)
+	return {}
+
+func _begin_depth_trip(destination: int) -> void:
+	depth_trip_target = destination
+	_continue_depth_trip()
+
+func _continue_depth_trip() -> void:
+	if depth_trip_target < 0:
+		return
+	if current_level == depth_trip_target:
+		depth_trip_target = -1
+		return
+	if surface_mode:
+		_descend_to_level_one()
+		_continue_depth_trip.call_deferred()
+		return
+	var previous_depth := current_level
+	var access := descent_access if depth_trip_target > current_level else int(world.entry)
+	_start_level_navigation(access)
+	if not moving and current_level == previous_depth:
+		depth_trip_target = -1
+
+func _start_return_to_base() -> void:
+	depth_trip_target = -1
+	if not world.is_empty():
+		_start_level_navigation(world.entry)
+
+func _start_descent_navigation() -> void:
+	depth_trip_target = -1
+	if _has_descent_elevator(descent_access):
+		_start_level_navigation(descent_access)
+
+func _start_level_navigation(target: int) -> void:
+	if surface_mode or level_navigation_target >= 0 or mining_cave >= 0 or bio_scan_room >= 0 or rockfall_clear_remaining > 0.0:
+		return
+	var going_up: bool = target == world.entry
+	if not going_up and _is_unopened_shaft(target) and _ladder_uses_left() <= 0:
+		status_label.text = "ESCALA ESGOTADA · REPARA-LA A LA BASE"
+		return
+	var access_position: Vector2 = world.caves[target].position
+	if _cave_at_position(unit_position) == target and unit_position.distance_to(access_position) <= 42.0:
+		moving = false
+		move_path.clear()
+		_finish_level_navigation(target)
+		return
 	var reachable := _reachable_revealed_cells(unit_position, true)
-	var cell := _nearest_revealed_walkable_in_cave(world.entry, entrance, reachable)
+	var cell := _nearest_revealed_walkable_in_cave(target, access_position, reachable)
 	var path: Array[Vector2] = []
 	if cell.x >= 0:
 		var arrival := (Vector2(cell) + Vector2.ONE * 0.5) * float(world.cell_size)
-		path = _find_path(unit_position, arrival, {}, true)
+		if arrival.distance_to(access_position) <= 42.0:
+			path = _find_path(unit_position, arrival, {}, true)
 	if path.is_empty():
-		status_label.text = "CAP CAMÍ CONEGUT FINS A LA PUJADA"
+		status_label.text = "CAP CAMÍ CONEGUT FINS A L’ACCÉS"
 		return
 	_return_to_map(MAP_ENTRY_ZOOM)
 	chained_cave_id = -1
 	move_path = path
 	move_target = path.back()
-	returning_to_base = true
+	level_navigation_target = target
+	center_map_during_move = true
 	moving = true
-	status_label.text = "TORNANT A LA PUJADA"
+	status_label.text = "CAMINANT CAP A LA PUJADA" if going_up else "CAMINANT CAP A LA BAIXADA"
 	_update_base_return_availability()
+
+func _finish_level_navigation(target: int) -> void:
+	if _cave_at_position(unit_position) != target:
+		depth_trip_target = -1
+		return
+	if target == world.entry:
+		_finish_return_to_entry()
+	elif _has_descent_elevator(target):
+		_inspect_map_room(target, unit_position)
+		_descend_to_lower_level()
+	if depth_trip_target >= 0:
+		_continue_depth_trip.call_deferred()
 
 func _finish_return_to_entry() -> void:
 	if current_level > 1 and _cave_at_position(unit_position) == world.entry:
@@ -4636,20 +5675,24 @@ func _can_return_to_base() -> bool:
 func _update_base_return_availability() -> void:
 	if not is_instance_valid(base_return_button):
 		return
-	base_return_button.disabled = surface_mode or returning_to_base or mining_cave >= 0 or bio_scan_room >= 0
-	var navigation_panel := analysis_tools_panel if analysis_mode else level_panel
-	if base_return_button.get_parent() != navigation_panel:
-		base_return_button.reparent(navigation_panel, false)
-	base_return_button.position = Vector2(12, 0) if analysis_mode else Vector2(16, 130)
-	base_return_button.size = Vector2(196, 30) if analysis_mode else Vector2(248, 30)
-	base_return_button.text = "TORNANT A LA PUJADA…" if returning_to_base else ("PUJA AL NIVELL %d" % -(current_level - 1) if current_level > 1 else "TORNA A LA BASE")
-	base_return_button.tooltip_text = "Torna a la superfície per les galeries que ja has recorregut."
-	if current_level > 1:
-		base_return_button.tooltip_text = "Torna a l’ascensor i puja al nivell %d." % -(current_level - 1)
+	var busy := surface_mode or level_navigation_target >= 0 or mining_cave >= 0 or bio_scan_room >= 0 or rockfall_clear_remaining > 0.0
+	base_return_button.disabled = busy
+	descend_navigation_button.disabled = busy
+	for button in [base_return_button, descend_navigation_button]:
+		if button.get_parent() != navigation_panel:
+			button.reparent(navigation_panel, false)
+	var has_descent := not surface_mode and _has_descent_elevator(descent_access)
+	base_return_button.text = "PUJA AL NIVELL %d" % -(current_level - 1) if current_level > 1 else "TORNA A LA BASE"
+	base_return_button.tooltip_text = "Camina fins a l’accés superior i puja."
+	descend_navigation_button.visible = has_descent
+	descend_navigation_button.text = "BAIXA AL NIVELL %d" % -(current_level + 1)
+	descend_navigation_button.tooltip_text = "Camina fins a l’accés inferior descobert i baixa."
 	lower_level_button.visible = _can_use_selected_level_access()
 	base_return_button.visible = not surface_mode and current_level > 0 and not (
 		lower_level_button.visible and selected_cave == world.entry)
 	if lower_level_button.visible:
+		if selected_cave != world.entry:
+			descend_navigation_button.hide()
 		lower_level_button.text = ("↑ " if selected_cave == world.entry else "↓ ") + _level_access_label(selected_cave)
 	_layout_room_controls()
 
@@ -4682,7 +5725,7 @@ func _approach_level_access(use_on_arrival: bool = false) -> void:
 	if path.is_empty() or path.back().distance_to(hatch) > 42.0:
 		status_label.text = "CAP CAMÍ TRANSITABLE FINS A L’ACCÉS"
 		return
-	returning_to_base = false
+	level_navigation_target = -1
 	use_elevator_on_arrival = use_on_arrival
 	chained_cave_id = -1
 	inspection_corridor_id = -1
@@ -5354,7 +6397,7 @@ func _update_current_cave(allow_intermediate_stop: bool = false) -> void:
 				current_cave_id = cave.id
 				var gallery_arrival: bool = analysis_mode and inspection_corridor_id >= 0 and cave.id == inspection_destination_cave_id
 				var is_destination: bool = (inspect_on_cave_arrival or gallery_arrival) and cave.id == inspection_destination_cave_id
-				var needs_inspection: bool = allow_intermediate_stop and not returning_to_base and not explored_caves.has(cave.id)
+				var needs_inspection: bool = allow_intermediate_stop and level_navigation_target < 0 and not explored_caves.has(cave.id)
 				if analysis_mode and inspect_on_cave_arrival:
 					selected_cave = cave.id
 					selected_cave_focus = unit_position

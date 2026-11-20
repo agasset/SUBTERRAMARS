@@ -1,8 +1,34 @@
 # Estat de traspàs
 
+«Enquadra el mapa» centra les sales, les galeries i les sortides al rectangle lliure entre les estadístiques, la navegació i els panells laterals. La llegenda ocupa la primera posició de la columna dreta. La caixa d’eines només avisa per l’estat del vestit, les botes, l’eina de mineria i l’escàner biològic si encara té usos. Una prova automatitzada amb Godot i OpenGL ha comprovat els contorns projectats, la posició de la llegenda i els avisos de la caixa.
+
+El mapa i la vista isomètrica mostren el nom i la profunditat sobre les estadístiques del nivell. Just a sota hi apareixen el número de sala, el percentatge d’escaneig i les icones de les troballes visibles. La llegenda queda fixa a la dreta. Una prova automatitzada amb Godot i OpenGL ha comprovat l’ordre vertical del HUD, el percentatge de la sala inicial i la visibilitat de la llegenda en totes dues vistes.
+
+Les ones de cobertura triguen 12,8 segons a arribar al límit del senyal a totes dues vistes. Les botes es desgasten a la meitat del ritme anterior per distància. La llum del casc canvia automàticament quan l’explorador passa entre zones il·luminades i fosques. Godot en mode headless ha comprovat l’encesa, l’estalvi de càrrega i que el canvi automàtic no gasta recanvis. Queda pendent la comprovació visual en partida.
+
+El selector de profunditat mostra els nivells 0 a −20 amb separadors cada tres nivells subterranis, el percentatge per nivell visitat i el desglossament de cinc categories en passar-hi el cursor. Les destinacions jugables es poden seleccionar per encadenar els trajectes a peu pels accessos coneguts. La comprovació prèvia estima oxigen i desgast, avisa de despreniments i bloqueja descensos sense escala. Els nivells −4 a −20 hi figuren com a pendents. Godot amb OpenGL ha comprovat la navegació del −3 a la superfície i el retorn al −3, els percentatges del selector i l’avís d’oxigen.
+
+El menú Partida permet crear perfils locals amb un desament per perfil, desar manualment i carregar. El primer perfil adopta l’expedició que hi ha en pantalla. Els perfils següents comencen una partida independent. Amb un perfil actiu es desa cada 60 segons, als canvis de nivell, al retorn a la base, en morir i quan es tanca la finestra. Es materialitza el món sencer i es conserva una còpia de la versió anterior. Les textures del terra es tornen a dibuixar i les fotografies es desen en PNG. Godot amb OpenGL ha verificat dos perfils independents, la càrrega des d’una instància nova, la fotografia, l’estat d’equip i minerals, el retorn al nivell superior i la còpia de reserva. Els perfils són locals i es trien des del menú en iniciar el joc.
+
+Els modificadors es compren, activen i desactiven dins de la fitxa de la peça a Millores d’equipament. Cada peça admet un mòdul actiu. Godot ha verificat que desactivar i reactivar un mòdul comprat no torna a cobrar-ne el cost.
+
+Ferro, quars i magnetita es recullen i es mostren per separat. Les millores enumeren el ferro i els punts exigits, i en nivells de fita hi afegeixen quars o magnetita. La caixa d’eines és a Equip, comença amb un ús i en guanya un per nivell. El taller reposa un ús per dos de ferro. Una prova amb Godot i OpenGL ha comprovat el bloqueig sense el mineral, el descompte de les receptes i la reparació i reposició d’un ús.
+
+La pestanya Modificadors del taller permet comprar i equipar soles, aïllaments, capçals de mineria i un filtre espectral. Cada peça admet un modificador actiu i canviar a un mòdul que ja s’ha comprat és gratuït a la base. Algunes sales del −2 i del −3 tenen aigua, gel o calor amb efectes sobre el moviment o el desgast. Les vetes especials de quars i magnetita i les espècies fèrriques requereixen el modificador corresponent. Godot amb OpenGL ha verificat els costos, el canvi de soles, el filtre fèrric i l’extracció de quars.
+
+El topall de l’equip i els subministraments és el nivell 20. L’escala plegable és una sola peça amb un ús inicial i un ús addicional per millora. El requadre mostra els usos gastats i la capacitat total. Reparar-la a la base costa dos materials i recupera tots els usos. Per obrir el segon accés cal reparar l’escala o millorar-la.
+
+El taller permet millorar els onze tipus d’equip i subministraments fins al nivell 10. Cada subministrament té botons separats per reposar o millorar. Materials i punts d’investigació comparteixen el saldo visible del taller, i la columna d’investigació s’ha integrat a les fitxes. Cada nivell de balisa suma 50 unitats d’abast. Godot amb OpenGL ha verificat les onze progressions, el topall, la despesa de tots dos recursos i la finestra amb la barra inferior visible. Els costos i increments són valors de prova.
+
+Les millores d’equipament requereixen materials i punts d’investigació. El dipòsit, les reserves, el llum del casc, les balises, les farmacioles, les caixes d’eines i les escales tenen un segon nivell funcional. Godot ha verificat el bloqueig sense punts, el descompte dels dos saldos i els efectes del dipòsit i la farmaciola millorats.
+
+El catàleg d’equip i millores s’obre en una finestra ampla. La graella de l’esquerra agrupa les operacions amb materials i el panell dret mostra les millores amb punts de recerca. Cada apartat indica el seu saldo. Una captura de Godot amb OpenGL ha verificat la disposició a 1440 × 900.
+
 ## Coves oxidades (nivells −1 a −3)
 
-El primer bioma és jugable fins al −3. L’inventari inicial inclou dues escales plegables, visibles a la barra d’equip. Els primers descensos requereixen una escala per accés i els trajectes posteriors fan servir ascensors. Les escales addicionals costen dos materials. Si només hi ha una veta en una sala veïna dins la cobertura inicial, s’hi afegeix una veta a la sala d’entrada del −1. El retorn conserva la generació i l’estat de cada nivell. Godot amb OpenGL ha verificat els dos descensos amb les escales inicials i el comptador a zero en arribar al −3.
+Els botons de Navegació porten l’explorador pels camins coneguts fins a l’accés superior o inferior. El botó de baixada apareix quan s’ha descobert l’accés, i el primer descens continua requerint una escala. Una prova headless ha verificat el recorregut amb els botons del −1 al −3 i de tornada a la superfície.
+
+El primer bioma és jugable fins al −3. L’escala plegable i els seus usos es mostren a la barra d’equip. Cada accés nou consumeix un ús i els trajectes posteriors fan servir ascensors. Si només hi ha una veta en una sala veïna dins la cobertura inicial, s’hi afegeix una veta a la sala d’entrada del −1. El retorn conserva la generació i l’estat de cada nivell. Godot amb OpenGL ha verificat el bloqueig del segon accés amb l’escala esgotada i el descens després d’augmentar-ne la capacitat.
 
 La llavor determina la distribució de flora i fauna i les espècies de cada sala, amb la molsa fèrrica i l’escarabat fèrric afegits al bioma. Godot ha verificat 50 llavors, 50 combinacions biològiques diferents al −3, els accessos en els dos sentits, el cost en escales i la disponibilitat de material inicial. La prova automatitzada situa l’explorador als accessos. Queda pendent una expedició completa a peu.
 
@@ -487,3 +513,4 @@ El clic al mapa i el botó d’inspecció obren la vista isomètrica només per 
 Durant un trajecte, si l’explorador entra en una sala intermèdia que encara no està registrada com a explorada, s’atura i obre la vista isomètrica. Per reprendre el trajecte cal una nova ordre de moviment. Les sales intermèdies completades es poden travessar.
 
 El mapa general i la vista isomètrica comparteixen el mateix ajust de navegació. Dins de la sala s’ometen els esglaons de la graella quan el segment directe passa per terra transitable i revelat. A les galeries es continua seguint la corba central. La bateria de Godot 4.7.2 en mode headless ha superat 51 de 51 llavors. Queda pendent la comprovació visual amb una partida interactiva.
+El menú Partida inclou «Reinicia la run» amb confirmació. Inicia una expedició a la superfície amb equip inicial i una llavor nova. Una prova automatitzada amb Godot i OpenGL ha comprovat que cancel·lar conserva l’expedició i que confirmar reinicia la llavor i els materials.
