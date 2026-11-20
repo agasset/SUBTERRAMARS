@@ -739,10 +739,17 @@ func _draw_map_room_tooltip() -> void:
 	var mouse := get_global_mouse_position()
 	if dragging or _over_ui(mouse):
 		return
-	var cave_id := _cave_at_position(_screen_to_world(mouse))
-	if cave_id < 0 or not _can_inspect_cave(cave_id):
+	var cave_id := _map_hovered_room(mouse)
+	if cave_id < 0:
 		return
 	var scanned := explored_caves.has(cave_id)
+	if scanned:
+		var cave: Dictionary = world.caves[cave_id]
+		var outline := PackedVector2Array()
+		for point in _rounded_map_contour(cave.contour):
+			outline.append(_world_to_screen(cave.position + point))
+		outline.append(outline[0])
+		draw_polyline(outline, CYAN, 2.0, true)
 	var title := "Sala %02d" % (cave_id + 1)
 	var lines := PackedStringArray()
 	var complete := false
@@ -775,6 +782,26 @@ func _draw_map_room_tooltip() -> void:
 	draw_string(ThemeDB.fallback_font, origin + Vector2(12, 22), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("ffd17e") if complete else CYAN)
 	for index in range(lines.size()):
 		draw_string(ThemeDB.fallback_font, origin + Vector2(12, 43 + index * 18), lines[index], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("dcecf0"))
+
+func _map_hovered_room(mouse: Vector2) -> int:
+	var point := _screen_to_world(mouse)
+	for cave in world.caves:
+		if not _can_inspect_cave(cave.id):
+			continue
+		var contour: PackedVector2Array = _rounded_map_contour(cave.contour) if explored_caves.has(cave.id) else cave.contour
+		if Geometry2D.is_point_in_polygon(point - cave.position, contour):
+			return cave.id
+	if show_findings:
+		var scale := clampf(zoom_level / MAP_ENTRY_ZOOM, 0.42, 1.15)
+		for cave in world.caves:
+			if not explored_caves.has(cave.id):
+				continue
+			var center := _world_to_screen(cave.position)
+			for fauna in [false, true]:
+				var marker := center + Vector2(15 if fauna else -15, -37) * scale
+				if mouse.distance_to(marker + Vector2(5, 0) * scale) <= 16.0 * scale and _has_undetectable_trace(cave.id, fauna):
+					return cave.id
+	return -1
 
 func _update_rockfall(delta: float) -> void:
 	rockfall_cooldown = maxf(0.0, rockfall_cooldown - delta)
@@ -1497,7 +1524,7 @@ func _draw_biological_trace(canvas: CanvasItem, center: Vector2, fauna: bool, ma
 	else:
 		canvas.draw_polyline(PackedVector2Array([center + Vector2(0, 5) * marker_scale, center,
 			center + Vector2(-4, -4) * marker_scale, center, center + Vector2(4, -5) * marker_scale]), ink, 1.4, true)
-	canvas.draw_string(ThemeDB.fallback_font, center + Vector2(6, 5) * marker_scale,
+	canvas.draw_string(ThemeDB.fallback_font, center + Vector2(11, 5) * marker_scale,
 		"?", HORIZONTAL_ALIGNMENT_LEFT, -1, maxi(7, roundi(12 * marker_scale)), ink)
 
 func _draw_pending_mineral_badge(canvas: CanvasItem, center: Vector2) -> void:
