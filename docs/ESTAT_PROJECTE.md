@@ -1090,3 +1090,9 @@ Verificat wall_openings_preview.gd en OpenGL, sis boques amb galeries parcials/c
 Afegit botó DESENCALLA · F8 a l’extrem final de la barra de navegació, amb el mateix estil i distribució adaptable. Connecta a la mateixa recuperació local que F8 i Opcions. Disponible en mapa/isomètric subterranis.
 
 Verificat unstuck_check.gd headless: senyal del botó al mapa i tecla F8 en isomètric executen recuperació sense canviar reserves/món. Sense errors de script; quatre ObjectDB pendents en sortir del visor. Sense nova inspecció visual ni partida manual.
+
+### Navegació compacta entre panells — 21/11/2026
+
+Botons de navegació ajustats a l’amplada real del text més 20 píxels, mínim 92, amb separació de 4. La barra es centra i limita a _view_rect (espai entre panells), en lloc d’ocupar tota l’amplada de la finestra i quedar tapada pel panell dret després d’afegir Desencalla.
+
+Verificat service_pan_check.gd OpenGL i inspeccionada oxidat_mes_suau.png: tots els botons, inclòs Desencalla al final, dins l’espai central. Sense errors; dues instàncies ObjectDB pendents en sortir del visor. Sense partida manual.

@@ -6493,13 +6493,15 @@ func _layout_room_controls() -> void:
 		if not button.visible:
 			continue
 		button.position = Vector2(x, 9)
-		button.size = Vector2(172, 30)
-		x += button.size.x + 6.0
+		var font: Font = button.get_theme_font("font")
+		var text_width: float = font.get_string_size(button.text,HORIZONTAL_ALIGNMENT_LEFT,-1,button.get_theme_font_size("font_size")).x
+		button.size = Vector2(maxf(92.0,ceilf(text_width)+20.0),30)
+		x += button.size.x + 4.0
 	navigation_panel.size.x = x + 6.0
-	var viewport_width := get_viewport_rect().size.x
-	var scale := minf(1.0, (viewport_width - 16.0) / navigation_panel.size.x)
+	var view := _view_rect()
+	var scale := minf(1.0, (view.size.x - 16.0) / navigation_panel.size.x)
 	navigation_panel.scale = Vector2.ONE * scale
-	navigation_panel.position = Vector2((viewport_width - navigation_panel.size.x * scale) * 0.5,
+	navigation_panel.position = Vector2(view.position.x+(view.size.x - navigation_panel.size.x * scale) * 0.5,
 		equipment_bar.position.y - navigation_panel.size.y * scale - 8.0)
 
 func _place_material_sites(include_ladder_reserve: bool = false) -> void:
