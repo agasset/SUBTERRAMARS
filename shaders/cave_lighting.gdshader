@@ -15,6 +15,8 @@ uniform vec2 helmet;
 uniform vec2 facing;
 uniform float beam_radius;
 uniform bool beam_on = false;
+uniform bool hostile_on = false;
+uniform vec2 hostile;
 uniform int light_count = 0;
 uniform vec2 lamps[32];
 uniform float radii[32];
@@ -85,6 +87,10 @@ void fragment() {
  // The explorer is already known: fog must not crop its elevated helmet.
  float explorer=1.0-smoothstep(0.75,1.0,length((p-helmet)/vec2(6.0*zoom,9.0*zoom)));
  fog=max(fog,explorer);
+ if(hostile_on) {
+  float attacker=1.0-smoothstep(0.7,1.0,length((p-hostile)/vec2(14.0*zoom,11.0*zoom)));
+  fog=max(fog,attacker);
+ }
  float cloud=0.5+0.5*sin(world.x*0.095+sin(world.y*0.13)+TIME*0.18);
  vec3 mist=vec3(0.025,0.037,0.043)*(0.8+cloud*0.35);
  COLOR=vec4(mix(mist,lit,fog),1.0);

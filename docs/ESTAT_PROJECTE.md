@@ -1096,3 +1096,61 @@ Verificat unstuck_check.gd headless: senyal del botó al mapa i tecla F8 en isom
 Botons de navegació ajustats a l’amplada real del text més 20 píxels, mínim 92, amb separació de 4. La barra es centra i limita a _view_rect (espai entre panells), en lloc d’ocupar tota l’amplada de la finestra i quedar tapada pel panell dret després d’afegir Desencalla.
 
 Verificat service_pan_check.gd OpenGL i inspeccionada oxidat_mes_suau.png: tots els botons, inclòs Desencalla al final, dins l’espai central. Sense errors; dues instàncies ObjectDB pendents en sortir del visor. Sense partida manual.
+
+### Prioritat del viatge davant de fauna — 21/11/2026
+
+Per petició d’Albert, les ordres de moviment ja no s’aturen per contacte amb animals dins d’una mateixa sala: _fauna_blocks_player_step retorna lliure mentre moving=true i els dos punts pertanyen a la mateixa sala. S’aplica a tornar a base i als altres destins ordenats. Fora d’aquesta condició es conserva el control de separació. Les rutes continuen utilitzant la màscara i el graf de galeries; no es creen dreceres entre sales ni es canvien coordenades per canvi de vista.
+
+Verificat fauna_separation_check.gd en OpenGL: mateix pas bloquejat sense ordre i permès amb ordre activa; quatre desviaments i resta de comprovacions anteriors passen. Sense errors, dues instàncies ObjectDB pendents en sortir del visor. Sense partida manual. Aquesta revisió permet solapament visual puntual amb l’animal durant el pas ordenat.
+
+### Alerta inequívoca d’atac — 21/11/2026
+
+Afegit panell central T’ESTAN ATACANT! amb vora vermella polsant i instrucció F/retirada, persistent 2,5 segons i renovat mentre hi ha preparació d’atac o hostil a menys de 35 unitats. Fletxa prop de l’explorador assenyala el depredador. Alarma repetida cada segon durant el perill, respectant el control d’efectes de so. El depredador alertat de la sala ocupada és visible encara que el filtre no permetés detectar-lo, i una finestra local de boira mostra el cos atacant; no analitza espècie, premia, revela cel·les ni mou unitats.
+
+Verificat predator_sample_radar_check.gd en OpenGL: atac real activa avís, animal visible i sense rastre fantasma superposat; impactes, radar i mostra amb clic continuen passant. Inspeccionada atac_impacte_vida.png amb panell gran, fletxa i VIDA −6. Sense errors ni avisos. Àudio amb controlador Dummy: no s’ha fet audició manual ni partida manual.
+
+### Reinici d’equip després de morir — 21/11/2026
+
+Albert informa que una nova expedició manté peces de nivell 2. Causa: la revisió de món nou encara restaurava nivells/modificadors després de generar-lo. Eliminada aquesta restauració: _restart_after_death utilitza el mateix inici nou que reinicia nivells interns a zero (nivell visible 1), arma/escut i modificadors. Catàleg i descobertes de perfil es mantenen. Actualitzat el text de fracàs i AGENTS.md; substitueix expressament la conservació de millores descrita a l’entrada anterior.
+
+Verificat death_new_world_check.gd headless: llavor nova, cap paquet recuperable, vestit/botes/arma a nivell visible 1, supply_tiers buit i cap modificador actiu/comprat. Reparació al mapa continua passant. Sense errors de script; dues instàncies ObjectDB pendents en sortir del visor. No s’ha alterat el desament real actual de l’usuari: s’aplica al següent inici nou després de morir.
+
+### Anàlisi de depredadors abatuts — 21/11/2026
+
+Corregida la selecció del cadàver: la lògica de mostres evitava expressament iniciar l’escaneig d’un depredador amb hp=0 i no hi havia cap altra via accessible. Ara clicar el cos pot recollir la mostra propera i iniciar l’anàlisi pendent. El control de filtre durant l’escaneig no rebutja un depredador abatut ja visible; es mantenen integritat d’escàner, sala i il·luminació. Prendre mostra continua sent independent i idempotent.
+
+Verificat predator_sample_radar_check.gd OpenGL: clic sobre cadàver recull una sola mostra i inicia bio_scan_fauna; completar la durada marca analyzed_fauna i tanca l’escaneig. Atacs/radar i desament continuen passant. Sense errors ni avisos. Sense partida manual.
+
+### Modificadors de projector i escut — 21/11/2026
+
+Afegits quatre modificadors amb les mateixes regles de compra (3 ferro + 1 punt), activació des de qualsevol lloc, exclusió d’un actiu per peça i persistència existent. Projector: Pols concentrat (+25% dany, 15 energia/tret) o Condensador eficient (9 energia/tret, dany estàndard). Escut: Camp reforçat (−20% dany entrant mentre té càrrega) o Regeneració ràpida (9 punts/s amb retard de 4 s fora de perill, davant dels 6 punts/s i 6 s base). Valors provisionals d’equilibri; commutar no restaura energia ni càrrega.
+
+Controls de compra/activació al costat de les targetes d’arma/escut al taller, menús laterals a inventari i MOD al HUD. El cos de l’escut continua automàtic; només es commuta el modificador. Una nova expedició els elimina igual que la resta de modificadors.
+
+Verificat combat_modifiers_check.gd headless i OpenGL: compra de quatre, energia 15/9 i dany 22,5/18 a nivell 1, reducció de dany 10→8 amb càrrega, retard 4 s i regeneració 0,9 per 0,1 s, dades presents al desament. Inspeccionada modificadors_defensa_taller.png. Sense errors, quatre ObjectDB pendents al tancament headless i dos al gràfic. Sense partida manual.
+
+### Entrar per la sortida pendent indicada — 21/11/2026
+
+Corregida ambigüitat entre marcador isomètric i terreny: _exit_marker_order prova primer la mateixa posició/radi visual dels marcadors, selecciona l’identificador exacte de galeria i la seva arribada abans de classificar el clic com a sala/terreny. Clic esquerre o dret sobre ? inicia l’ordre per aquella galeria; un cadenat continua mostrant el requisit d’abast existent. El marcador no es confon amb arrossegament en espai buit. No canvia geometria, col·lisions o descoberta.
+
+Verificat exit_marker_check.gd headless amb 60 boques del món de prova: tots els marcadors resolen al corredor correcte, 60 rutes no buides amb segments transitables i món invariant. Clic esquerre sintètic sobre marcador accessible inicia moviment amb inspection_corridor_id correcte. Última execució sense errors ni avisos. No s’ha reproduït la llavor/desament exacte de la captura d’Albert ni fet inspecció visual interactiva; la correcció cobreix el desajust de clic/ruta identificat.
+
+### Targeta d’escàner il·luminada amb accions pendents — 21/11/2026
+
+Després d’analitzar la flora/fauna seleccionada, si encara és possible fer una foto pendent o recollir una mostra, tota la targeta de l’escàner s’il·lumina en cian amb pols suau i contorn visible. Reutilitza les condicions reals dels botons, no genera accions duplicades ni recompenses. En completar-les o canviar de selecció fora d’un subjecte disponible s’apaga; redibuix explícit per evitar que quedi l’últim fotograma il·luminat.
+
+Verificat predator_sample_radar_check.gd OpenGL: completar anàlisi amb foto pendent activa el ressaltat, tenir mostra i foto el desactiva. Inspeccionada escaner_accions_pendents.png. Sense errors de script; sis instàncies ObjectDB pendents en sortir del visor. Sense partida manual.
+
+### Recollida explícita de restes de depredador — 21/11/2026
+
+El cadàver sense mostra recollida mostra RECULL RESTES. Clicar-lo dins l’abast de 38 unitats cancel·la l’ordre de moviment pendent abans de recollir; evita rebutjar la recollida perquè l’explorador encara anava cap a un destí. Dona una mostra biològica i el punt de recerca existent, una sola vegada; el cartell desapareix després de recollir i no surt en fotografies. Anàlisi i fotografia continuen disponibles. No s’ha afegit una nova moneda o recurs mineral als animals.
+
+Verificat predator_sample_radar_check.gd OpenGL amb moviment actiu abans del clic: s’atura, neteja ruta, recull una sola mostra, la desa i completa l’anàlisi; cap recompensa duplicada. Sense errors; sis instàncies ObjectDB pendents en sortir del visor. Sense nova inspecció visual específica del cartell ni partida manual.
+
+### Marcador de retorn i ruta descoberta — 21/11/2026
+
+Afegits POSA MARCADOR i TORNA AL MARCADOR a Navegació en mapa/isomètric. Desa posició exacta, llavor i estrat; col·locar un altre marcador substitueix l’anterior. Dades opcionals al desament per compatibilitat. Bandera industrial pixel art a assets/sprites/marcador_retorn.png, imagegen integrat, prompt exacte a PROMPT_MARCADOR_RETORN.md. Ancoratge al peu, nearest i mida mínima llegible a zoom baix. Un món nou l’esborra.
+
+Retorn al mateix nivell per rutes conegudes amb comprovació de cada dos unitats: terreny revelat/transitable i punt dins sala coneguda o tram recorregut. Entre sales només connexions completades; entre estrats reutilitza el viatge pels accessos coneguts i reprèn el punt del marcador en arribar. Si no hi ha ruta descoberta, avisa i no mou la unitat. Arreglat també _is_known_room_route_point perquè reconegui galeries completades encara que no hi hagi rastres parcials al diccionari walked_gallery_spans, sense dependre de la vista isomètrica activa.
+
+Verificat navigation_marker_check.gd en OpenGL: botons en ambdues vistes, destí exacte i segments transitables, informació al desament, rebuig de retorn en retirar les connexions conegudes, retorn des de l’accés d’estrat 2 cap al marcador d’estrat 1, neteja en món nou. Món invariant durant ordres locals. Inspeccionada marcador_retorn.png amb sprite industrial i botons dins la barra. Última execució sense errors ni avisos; no s’ha fet partida manual ni un recorregut llarg complet entre diversos estrats.

@@ -18,6 +18,8 @@ var attack_from := Vector2.ZERO
 var attack_to := Vector2.ZERO
 var hit_shield := 0.0
 var hit_health := 0.0
+var combat_warning_left := 0.0
+var combat_alarm_left := 0.0
 var warned_room := ""
 var weapon_label: Label
 var shield_label: Label
@@ -36,6 +38,8 @@ func reset() -> void:
 	hit_left=0.0
 	attack_left=0.0
 	attack_room=-1
+	combat_warning_left=0.0
+	combat_alarm_left=0.0
 
 static func defaults() -> Dictionary:
 	return {"weapon_tier":0,"shield_tier":0,"energy":100.0,"shield":40.0,"enabled":true,"cooldown":0.0,"recharge_delay":0.0}
@@ -169,6 +173,8 @@ func tick(game, delta: float) -> void:
 	beam_left=maxf(0,beam_left-delta)
 	hit_left=maxf(0,hit_left-delta)
 	attack_left=maxf(0,attack_left-delta)
+	combat_warning_left=maxf(0,combat_warning_left-delta)
+	combat_alarm_left=maxf(0,combat_alarm_left-delta)
 	var state: Dictionary = game.defence_state
 	state.cooldown=maxf(0,float(state.cooldown)-delta)
 	state.recharge_delay=maxf(0,float(state.recharge_delay)-delta)
@@ -197,6 +203,11 @@ func tick(game, delta: float) -> void:
 			game.status_label.text="DEPREDADOR A PROP · F: POLS · ESCUT AUTOMÀTIC"
 			game.game_audio.play("predator")
 		enemy.alert=threat
+		if float(enemy.windup)>0 or (threat and distance<=35.0):
+			combat_warning_left=2.5
+		if combat_warning_left>0 and combat_alarm_left<=0:
+			game.game_audio.play("alarm")
+			combat_alarm_left=1.0
 		enemy.cooldown=maxf(0,float(enemy.cooldown)-delta)
 		enemy.stun=maxf(0,float(enemy.stun)-delta)
 		if threat and float(enemy.stun)<=0:
@@ -217,18 +228,20 @@ func tick(game, delta: float) -> void:
 				_move(game,enemy,delta,float(config.speed))
 	if not threat:
 		state.energy=minf(100,float(state.energy)+delta*7.0)
-		if float(state.recharge_delay)<=0: state.shield=minf(40+20*int(state.shield_tier),float(state.shield)+delta*6.0)
+		if float(state.recharge_delay)<=0: state.shield=minf(40+20*int(state.shield_tier),float(state.shield)+delta*(9.0 if game.equipped_modifiers.get("escut","")=="shield_recovery" else 6.0))
 	refresh_ui(game)
 
 func damage(game, amount: float) -> void:
 	var state: Dictionary = game.defence_state
+	if float(state.shield)>0 and game.equipped_modifiers.get("escut","")=="shield_hardening": amount*=0.8
 	var absorbed := minf(amount,float(state.shield)) if bool(state.enabled) else 0.0
 	state.shield=float(state.shield)-absorbed
-	state.recharge_delay=6.0
+	state.recharge_delay=4.0 if game.equipped_modifiers.get("escut","")=="shield_recovery" else 6.0
 	game.health=maxf(0,game.health-(amount-absorbed))
 	hit_shield=absorbed
 	hit_health=amount-absorbed
 	hit_left=1.0
+	combat_warning_left=2.5
 	game._cancel_bio_scan()
 	game.mining_cave=-1
 	game.mining_remaining=0.0
@@ -240,8 +253,10 @@ func damage(game, amount: float) -> void:
 func fire(game) -> bool:
 	if game.surface_mode or game.taking_field_photo or game.inventory_window.visible or game.discovery_dialog.visible or game.death_dialog.visible: return false
 	var state: Dictionary = game.defence_state
+	var modifier: String=game.equipped_modifiers.get("arma","")
+	var energy_cost := 9.0 if modifier=="weapon_efficiency" else (15.0 if modifier=="weapon_focus" else 12.0)
 	if float(state.cooldown)>0: return false
-	if float(state.energy)<12:
+	if float(state.energy)<energy_cost:
 		game._action_notice("ARMA SENSE ENERGIA · Allunya’t del depredador per recarregar-la.")
 		return false
 	var room: int = game._cave_at_position(game.unit_position)
@@ -253,12 +268,12 @@ func fire(game) -> bool:
 	if game.unit_position.distance_to(enemy.position)>70+8*int(state.weapon_tier) or not game._segment_is_walkable(game.unit_position,enemy.position,true):
 		game._action_notice("DEPREDADOR FORA D’ABAST O COBERT PER LA ROCA")
 		return false
-	state.energy=float(state.energy)-12
+	state.energy=float(state.energy)-energy_cost
 	state.cooldown=0.45
 	game._cancel_bio_scan()
 	game.mining_cave=-1
 	game.mining_remaining=0.0
-	enemy.hp=maxf(0,float(enemy.hp)-(18+7*int(state.weapon_tier)))
+	enemy.hp=maxf(0,float(enemy.hp)-(18+7*int(state.weapon_tier))*(1.25 if modifier=="weapon_focus" else 1.0))
 	enemy.stun=0.55
 	enemy.windup=0.0
 	beam_from=game.unit_position
@@ -324,6 +339,13 @@ func draw_creature(game, enemy: Dictionary) -> void:
 		elif float(enemy.windup)>0:
 			visual-=Vector2(enemy.facing).normalized()*2.0*(1.0-float(enemy.windup)/float(stats(game.current_level).windup))
 	game.draw_texture_rect_region(atlas,sprite_rect(game,visual),source,tint)
+	if float(enemy.hp)<=0 and not game.taking_field_photo and not game.fauna_samples.has(enemy.cave_id):
+		var anchor: Vector2=game._world_to_screen(enemy.position)-Vector2(0,18)*game.zoom_level
+		var caption := "RECULL RESTES"
+		var font_size := 13
+		var width := ThemeDB.fallback_font.get_string_size(caption,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size).x
+		game.draw_rect(Rect2(anchor-Vector2(width*0.5+5,15),Vector2(width+10,21)),Color("0b2228"))
+		game.draw_string(ThemeDB.fallback_font,anchor-Vector2(width*0.5,0),caption,HORIZONTAL_ALIGNMENT_LEFT,-1,font_size,Color("a9f7db"))
 	if game.taking_field_photo or float(enemy.hp)<=0: return
 	var anchor: Vector2 = game._world_to_screen(enemy.position)-Vector2(0,15)*game.zoom_level
 	var width: float = 16*game.zoom_level
@@ -342,6 +364,21 @@ func draw_badge(canvas: CanvasItem, center: Vector2, species: String, scale: flo
 func draw_fx(game, canvas: CanvasItem) -> void:
 	if game.surface_mode or game.taking_field_photo: return
 	draw_radar(game,canvas)
+	if combat_warning_left>0:
+		var enemy := predator(game,game._cave_at_position(game.unit_position))
+		if not enemy.is_empty() and float(enemy.hp)>0:
+			var view: Rect2=game._view_rect()
+			var width: float=minf(480.0,view.size.x-24.0)
+			var rect := Rect2(Vector2(view.get_center().x-width*0.5,210),Vector2(width,64))
+			canvas.draw_rect(rect,Color("2d1118"))
+			canvas.draw_rect(rect,Color(1.0,0.28,0.18,0.65+0.35*sin(game.fauna_time*9)),false,3.0)
+			canvas.draw_string(ThemeDB.fallback_font,rect.position+Vector2(6,27),"T’ESTAN ATACANT!",HORIZONTAL_ALIGNMENT_CENTER,width-12,22,Color("fff0d5"))
+			canvas.draw_string(ThemeDB.fallback_font,rect.position+Vector2(6,49),"F: DEFENSA’T · ALLUNYA’T DEL DEPREDADOR",HORIZONTAL_ALIGNMENT_CENTER,width-12,12,Color("ffbd8b"))
+			var player: Vector2=game._world_to_screen(game.unit_position)-Vector2(0,20)
+			var direction: Vector2=player.direction_to(game._world_to_screen(enemy.position)-Vector2(0,20))
+			var tip := player+direction*52.0
+			canvas.draw_line(player+direction*25,tip,Color("ff7053"),3.0,false)
+			canvas.draw_colored_polygon(PackedVector2Array([tip+direction*8,tip-direction*5+direction.orthogonal()*7,tip-direction*5-direction.orthogonal()*7]),Color("ffb16d"))
 	if hit_left>0:
 		var scale: float=clampf(game.zoom_level if game.analysis_mode else 1.0,1.0,5.0)
 		var point: Vector2=game._world_to_screen(game.unit_position)-Vector2(0,9)*scale
@@ -402,6 +439,10 @@ func build_ui(game, inventory: Control, upgrades: Control) -> void:
 	shield_upgrade=game._button("",Vector2.ZERO,Vector2.ZERO)
 	shield_upgrade.pressed.connect(func() -> void: upgrade(game,true))
 	shield_offer=game._add_workshop_offer(upgrades,"Escut personal","",shield_upgrade)
+	game._add_equipment_modifiers(weapon_offer,"arma")
+	game._add_equipment_modifiers(shield_offer,"escut")
+	game._add_modifier_menu(weapon_label.get_parent(),"arma")
+	game._add_modifier_menu(shield_label.get_parent(),"escut")
 	refresh_ui(game)
 
 func upgrade(game, shield: bool) -> bool:

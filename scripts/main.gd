@@ -9,6 +9,11 @@ var defence_system := ExpeditionDefence.new()
 var defence_state: Dictionary = ExpeditionDefence.defaults()
 var campaign_biome_order: Array = CampaignRules.CLASSIC_ORDER.duplicate()
 var discovered_biomes: Dictionary = {}
+var navigation_marker: Dictionary = {}
+var marker_return_pending := false
+var place_marker_button: Button
+var return_marker_button: Button
+var navigation_marker_texture: Texture2D
 
 func _biome_at_depth(depth: int) -> int:
 	return CampaignRules.biome_at_depth(depth,campaign_biome_order)
@@ -366,6 +371,10 @@ const EQUIPMENT_MODIFIERS := {
 	"mining_hard": ["mineria", "Capçal reforçat", "Permet extreure magnetita de les vetes dures.", "magnetita"],
 	"scanner_ferric": ["escaner", "Filtre espectral fèrric", "Detecta la molsa i l’escarabat fèrrics.", "ferric"],
 	"scanner_abyss": ["escaner", "Filtre de bioluminescència", "Filtra la interferència bioluminescent del pas a les zones profundes.", "abyss"],
+	"weapon_focus": ["arma","Pols concentrat","+25% de dany; consumeix 15 d’energia per tret en lloc de 12.","focus"],
+	"weapon_efficiency": ["arma","Condensador eficient","Consumeix 9 d’energia per tret en lloc de 12, mantenint el dany.","efficiency"],
+	"shield_hardening": ["escut","Camp reforçat","Redueix un 20% el dany rebut mentre l’escut té càrrega.","hardening"],
+	"shield_recovery": ["escut","Regeneració ràpida","Regenera 9 punts/s després de 4 s fora de perill, en lloc de 6 punts/s després de 6 s.","recovery"],
 }
 const MODIFIER_MATERIAL_COST := 3
 const MODIFIER_RESEARCH_COST := 1
@@ -539,6 +548,8 @@ func _advance_fauna(delta: float) -> void:
 
 func _fauna_blocks_player_step(start: Vector2, finish: Vector2) -> bool:
 	var room := _cave_at_position(finish)
+	if moving and room>=0 and _cave_at_position(start)==room:
+		return false # Ordered travel through a room has priority over animal bodies.
 	if not fauna_sites.has(room): return false
 	var animal := _fauna_position(room)
 	return Geometry2D.get_closest_point_to_segment(animal, start, finish).distance_to(animal) < 22.0 and finish.distance_to(animal) < start.distance_to(animal)
@@ -3650,6 +3661,8 @@ func _capture_saved_game() -> Dictionary:
 	game["expedition_completed"] = expedition_completed
 	game["deepest_reached"] = deepest_reached
 	game["campaign_biome_order"] = campaign_biome_order.duplicate()
+	game["navigation_marker"]=navigation_marker.duplicate(true)
+	game["marker_return_pending"]=marker_return_pending
 	game["discovered_biomes"] = discovered_biomes.duplicate()
 	game["defence_state"] = defence_state.duplicate()
 	game["starting_rewards_depth"] = starting_rewards_depth
@@ -3693,6 +3706,8 @@ func _valid_saved_game(game: Dictionary) -> bool:
 	return true
 
 func _restore_saved_game(game: Dictionary) -> void:
+	navigation_marker=game.get("navigation_marker",{}).duplicate(true)
+	marker_return_pending=bool(game.get("marker_return_pending",false))
 	var saved_order: Array = game.get("campaign_biome_order",CampaignRules.CLASSIC_ORDER)
 	campaign_biome_order = saved_order.duplicate() if CampaignRules.valid_order(saved_order) else CampaignRules.CLASSIC_ORDER.duplicate()
 	discovered_biomes = game.get("discovered_biomes",{}).duplicate()
@@ -4119,12 +4134,18 @@ func _build_ui() -> void:
 	unstuck_navigation_button.tooltip_text="Recupera l’explorador en un punt lliure proper sense canviar de sala ni recarregar recursos."
 	unstuck_navigation_button.pressed.connect(_recover_stuck_explorer)
 	navigation_panel.add_child(unstuck_navigation_button)
+	place_marker_button=_button("POSA MARCADOR",Vector2.ZERO,Vector2(140,30))
+	place_marker_button.pressed.connect(_place_navigation_marker)
+	navigation_panel.add_child(place_marker_button)
+	return_marker_button=_button("TORNA AL MARCADOR",Vector2.ZERO,Vector2(140,30))
+	return_marker_button.pressed.connect(_return_to_navigation_marker)
+	navigation_panel.add_child(return_marker_button)
 	var navigation_idle := StyleBoxFlat.new()
 	navigation_idle.bg_color = Color("173244")
 	navigation_idle.set_corner_radius_all(4)
 	var navigation_hover := navigation_idle.duplicate() as StyleBoxFlat
 	navigation_hover.bg_color = CYAN
-	for button in [map_return_button, inspect_room_button, fit_map_button, center_explorer_button, biome_base_return_button, base_return_button, descend_navigation_button, lower_level_button, unstuck_navigation_button]:
+	for button in [map_return_button, inspect_room_button, fit_map_button, center_explorer_button, biome_base_return_button, base_return_button, descend_navigation_button, lower_level_button, place_marker_button, return_marker_button, unstuck_navigation_button]:
 		button.add_theme_stylebox_override("normal", navigation_idle)
 		button.add_theme_stylebox_override("hover", navigation_hover)
 		button.add_theme_stylebox_override("pressed", navigation_hover)
@@ -4410,7 +4431,7 @@ func _room_needs_ferric_filter(cave_id: int) -> bool:
 func _has_undetectable_trace(cave_id: int, fauna: bool) -> bool:
 	if fauna:
 		var corpse := defence_system.predator(self,cave_id)
-		if not corpse.is_empty() and float(corpse.hp)<=0: return false
+		if not corpse.is_empty() and (float(corpse.hp)<=0 or bool(corpse.alert)): return false
 	var sites := fauna_sites if fauna else flora_sites
 	var analyzed := analyzed_fauna if fauna else analyzed_flora
 	var species := fauna_species_by_room if fauna else flora_species_by_room
@@ -4507,7 +4528,7 @@ func _add_inventory_strip_group(groups: HBoxContainer, title: String, slots: Arr
 			card.draw.connect(_draw_low_supply_card.bind(card, index))
 		var footer := _add_inventory_strip_footer(contents)
 		if index in [19,20]: defence_system.attach_footer(self,footer,index)
-		var modifier_slots := {9: "botes", 4: "vestit", STRIP_MINING_SLOT: "mineria", STRIP_BIO_SCANNER_SLOT: "escaner"}
+		var modifier_slots := {9: "botes", 4: "vestit", STRIP_MINING_SLOT: "mineria", STRIP_BIO_SCANNER_SLOT: "escaner",19:"arma",20:"escut"}
 		if title=="EQUIP":
 			var body := contents.get_child(0) as VBoxContainer
 			body.get_child(0).hide()
@@ -4753,6 +4774,11 @@ func _update_field_action_cards() -> void:
 		mining_progress = 1.0 - rockfall_clear_remaining / ROCKFALL_CLEAR_SECONDS
 	var scan_progress: float = bio_scan_elapsed / _bio_scan_duration(bio_scanner_tier) if bio_scan_room >= 0 else -1.0
 	for index in field_action_cards:
+		if index==STRIP_BIO_SCANNER_SLOT:
+			var pending := _has_pending_biology_action()
+			if pending or bool(field_action_cards[index].get_meta("biology_pending",false)):
+				field_action_cards[index].queue_redraw()
+			field_action_cards[index].set_meta("biology_pending",pending)
 		var progress := mining_progress if index == STRIP_MINING_SLOT else scan_progress
 		if progress < 0.0 and now < field_action_completed_until.get(index, 0):
 			progress = 1.0
@@ -4760,7 +4786,19 @@ func _update_field_action_cards() -> void:
 			field_action_progress[index] = progress
 			field_action_cards[index].queue_redraw()
 
+func _has_pending_biology_action() -> bool:
+	if not analysis_mode or surface_mode or selected_cave<0 or bio_scan_room>=0: return false
+	var scanned := analyzed_fauna.has(selected_cave) if selected_fauna==selected_cave else (selected_flora==selected_cave and analyzed_flora.has(selected_cave))
+	if not scanned: return false
+	var species := _camera_species_id()
+	return _can_collect_flora_sample() or (not species.is_empty() and not field_photos.has(species) and _can_photograph_subject())
+
 func _draw_field_action_card(card: PanelContainer, index: int) -> void:
+	if index==STRIP_BIO_SCANNER_SLOT and _has_pending_biology_action():
+		var pulse := 0.5+0.5*sin(float(Time.get_ticks_msec())*TAU/1400.0)
+		var area := Rect2(Vector2(2,2),card.size-Vector2(4,4))
+		card.draw_rect(area,Color(CYAN,0.14+0.10*pulse))
+		card.draw_rect(area,Color(CYAN,0.65+0.35*pulse),false,2.0,false)
 	var progress := float(field_action_progress.get(index, -1.0))
 	if progress < 0.0:
 		return
@@ -6001,6 +6039,7 @@ func _fauna_is_visible() -> bool:
 
 func _fauna_is_visible_in_room(cave_id: int) -> bool:
 	var corpse := defence_system.predator(self,cave_id)
+	if not corpse.is_empty() and bool(corpse.alert) and _cave_at_position(unit_position)==cave_id: return true
 	if not corpse.is_empty() and float(corpse.hp)<=0:
 		return _room_is_fully_lit(cave_id) or _is_revealed(corpse.position)
 	return fauna_sites.has(cave_id) and _can_detect_species(fauna_species_by_room.get(cave_id, "")) and (seen_fauna.has(cave_id) or _room_is_fully_lit(cave_id) or (_is_revealed(_fauna_position(cave_id)) and _can_use_tools_at(_fauna_position(cave_id), cave_id)))
@@ -6078,6 +6117,14 @@ func _select_flora(screen_position: Vector2) -> void:
 	if fauna_distance <= animal_hit_radius or (fauna_distance <= 22.0 and fauna_distance <= flora_distance):
 		selected_fauna = selected_cave
 		if not hostile.is_empty() and float(hostile.hp)<=0 and not fauna_samples.has(selected_cave):
+			if unit_position.distance_to(hostile.position)<=38.0:
+				moving=false
+				move_path.clear()
+				selected_route.clear()
+				move_target=unit_position
+				level_navigation_target=-1
+				depth_trip_target=-1
+				chained_cave_id=-1
 			if _can_collect_flora_sample():
 				_collect_flora_sample()
 			else:
@@ -6086,8 +6133,7 @@ func _select_flora(screen_position: Vector2) -> void:
 		selected_flora = selected_cave
 	_update_flora_button()
 	if (selected_fauna >= 0 and not analyzed_fauna.has(selected_fauna)) or (selected_flora >= 0 and not analyzed_flora.has(selected_flora)):
-		var corpse := defence_system.predator(self,selected_fauna)
-		if corpse.is_empty() or float(corpse.hp)>0: _interact_with_flora()
+		_interact_with_flora()
 	_layout_room_controls()
 	queue_redraw()
 
@@ -6145,7 +6191,7 @@ func _collect_flora_sample() -> void:
 	if animal: fauna_samples[selected_cave]=false
 	else: flora_samples[selected_cave] = false
 	_update_inventory_screen()
-	status_label.text = "MOSTRA DE DEPREDADOR RECOLLIDA · +1 PUNT" if animal else "MOSTRA DE FLORA RECOLLIDA · +1 PUNT"
+	status_label.text = "RESTES DEL DEPREDADOR RECOLLIDES · +1 MOSTRA BIOLÒGICA · +1 PUNT" if animal else "MOSTRA DE FLORA RECOLLIDA · +1 PUNT"
 	_update_flora_button()
 	_layout_room_controls()
 	_save_active_profile()
@@ -6218,7 +6264,9 @@ func _update_bio_scan(delta: float) -> void:
 		return
 	var cave_id := bio_scan_room
 	var species: String = (fauna_species_by_room if bio_scan_fauna else flora_species_by_room).get(cave_id, "")
-	if not _can_detect_species(species):
+	var corpse := defence_system.predator(self,cave_id) if bio_scan_fauna else {}
+	var dead_predator := not corpse.is_empty() and float(corpse.hp)<=0
+	if not dead_predator and not _can_detect_species(species):
 		_cancel_bio_scan()
 		_scanner_requirement_notice()
 		return
@@ -6480,6 +6528,7 @@ func _update_field_equipment_buttons() -> void:
 	_layout_room_controls()
 
 func _layout_room_controls() -> void:
+	if is_instance_valid(return_marker_button): return_marker_button.disabled=navigation_marker.is_empty() or int(navigation_marker.get("seed",-1))!=seed_value
 	if not is_instance_valid(navigation_panel):
 		return
 	navigation_panel.visible = not surface_mode
@@ -6489,7 +6538,7 @@ func _layout_room_controls() -> void:
 	if not navigation_panel.visible:
 		return
 	var x := 94.0
-	for button in [map_return_button, inspect_room_button, fit_map_button, center_explorer_button, biome_base_return_button, base_return_button, descend_navigation_button, lower_level_button, unstuck_navigation_button]:
+	for button in [map_return_button, inspect_room_button, fit_map_button, center_explorer_button, biome_base_return_button, base_return_button, descend_navigation_button, lower_level_button, place_marker_button, return_marker_button, unstuck_navigation_button]:
 		if not button.visible:
 			continue
 		button.position = Vector2(x, 9)
@@ -7280,6 +7329,8 @@ func _at_lower_level_access() -> bool:
 	return _has_descent_elevator(descent_access) and analysis_mode and selected_cave == descent_access and current_cave_id == descent_access and not moving and _cave_at_position(unit_position) == descent_access and unit_position.distance_to(_level_access_position(descent_access)) <= 42.0
 
 func _new_world(value: int) -> void:
+	navigation_marker.clear()
+	marker_return_pending=false
 	defence_state=ExpeditionDefence.defaults()
 	defence_system.reset()
 	campaign_biome_order = CampaignRules.order_for_seed(value)
@@ -7517,9 +7568,10 @@ func _input(event: InputEvent) -> void:
 			dragging = false
 		elif event.button_index == MOUSE_BUTTON_RIGHT and not event.pressed:
 			dragging=false
-		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed and not _over_ui(event.position):
+		elif event.pressed and not _over_ui(event.position) and (event.button_index==MOUSE_BUTTON_RIGHT or (event.button_index==MOUSE_BUTTON_LEFT and analysis_mode and not _exit_marker_order(_screen_to_world(event.position)).is_empty())):
 			var ground := _screen_to_world(event.position)
 			var empty := _cave_at_position(ground)<0
+			if analysis_mode and not _exit_marker_order(ground).is_empty(): empty=false
 			if empty:
 				for corridor in world.get("corridors",[]):
 					if _distance_to_polyline(ground,corridor.points)<=float(corridor.width)*0.5: empty=false; break
@@ -7890,7 +7942,7 @@ func _expedition_emergency() -> String:
 	return ""
 
 func _death_summary(reason: String) -> String:
-	return "%s\n\nL’expedició s’ha acabat. Els materials que portaves es perden i no es poden recuperar. La pròxima sortida començarà en un món nou. Conserves el catàleg, les descobertes del perfil i les millores d’equip." % reason
+	return "%s\n\nL’expedició s’ha acabat. Els materials que portaves es perden i no es poden recuperar. La pròxima sortida començarà en un món nou. Conserves el catàleg i les descobertes del perfil. L’equip torna al nivell 1, sense modificadors de l’expedició anterior." % reason
 
 func _end_expedition(reason: String) -> void:
 	if death_dialog.visible:
@@ -7908,19 +7960,7 @@ func _end_expedition(reason: String) -> void:
 func _restart_after_death() -> void:
 	if expedition_record.get("outcome","")!="Mort": return
 	death_dialog.hide()
-	var upgrades := {}
-	for field in ["equipped_boots","bio_scanner_tier","suit_tier","mining_tool","supply_tiers","owned_modifiers","equipped_modifiers","equipment_research_spent"]:
-		var value = get(field)
-		upgrades[field]=value.duplicate(true) if value is Dictionary else value
-	var weapon_tier: int=defence_state.weapon_tier
-	var shield_tier: int=defence_state.shield_tier
 	_start_run_with_new_seed()
-	for field in upgrades: set(field,upgrades[field])
-	defence_state.weapon_tier=weapon_tier
-	defence_state.shield_tier=shield_tier
-	defence_state.shield=40.0+20.0*shield_tier
-	oxygen_seconds=_oxygen_capacity()
-	flashlight_charge=_helmet_battery_duration()
 	_enter_surface_base()
 	_save_active_profile()
 
@@ -8090,6 +8130,11 @@ func _continue_depth_trip() -> void:
 	if depth_trip_target < 0:
 		return
 	if current_level == depth_trip_target:
+		if marker_return_pending and int(navigation_marker.get("level",-1))==current_level:
+			depth_trip_target=-1
+			marker_return_pending=false
+			_return_to_navigation_marker()
+			return
 		if _depth_has_workshop(current_level):
 			_start_level_navigation(int(world.entry))
 			if moving:
@@ -8105,6 +8150,7 @@ func _continue_depth_trip() -> void:
 	_start_level_navigation(access)
 	if not moving and current_level == previous_depth:
 		depth_trip_target = -1
+		marker_return_pending=false
 
 func _start_return_to_base() -> void:
 	depth_trip_target = -1
@@ -8327,6 +8373,69 @@ func _nearest_visible_preview_cell(cave_id: int, point: Vector2) -> Vector2:
 				nearest = cell_center
 	return nearest
 
+func _place_navigation_marker() -> void:
+	if surface_mode or death_dialog.visible: return
+	navigation_marker={"seed":seed_value,"level":current_level,"position":unit_position}
+	marker_return_pending=false
+	_layout_room_controls()
+	_action_notice("MARCADOR GUARDAT · Estrat −%d" % current_level)
+	_save_active_profile()
+	queue_redraw()
+
+func _return_to_navigation_marker() -> void:
+	if navigation_marker.is_empty() or int(navigation_marker.get("seed",-1))!=seed_value: return
+	if death_dialog.visible or mining_cave>=0 or bio_scan_room>=0: return
+	moving=false
+	move_path.clear()
+	selected_route.clear()
+	level_navigation_target=-1
+	chained_cave_id=-1
+	if current_level!=int(navigation_marker.level) or surface_mode:
+		marker_return_pending=true
+		_begin_depth_trip(int(navigation_marker.level))
+		return
+	marker_return_pending=false
+	var target: Vector2=navigation_marker.position
+	if unit_position.distance_to(target)<1.0:
+		_action_notice("JA ETS AL MARCADOR")
+		return
+	var path := _find_path(unit_position,target,{},true)
+	var last: Vector2=path.back() if not path.is_empty() else unit_position
+	if path.is_empty() or not _segment_is_walkable(last,target):
+		_action_notice("NO HI HA CAP CAMÍ CONEGUT FINS AL MARCADOR")
+		return
+	path.append(target)
+	var previous := unit_position
+	for point in path:
+		var steps := maxi(1,ceili(previous.distance_to(point)/2.0))
+		for step in range(steps+1):
+			var sample: Vector2=previous.lerp(point,float(step)/steps)
+			if not _segment_is_walkable(sample,sample) or not _is_known_room_route_point(sample):
+				_action_notice("NO HI HA CAP CAMÍ DESCOBERT FINS AL MARCADOR")
+				return
+		previous=point
+	_return_to_map(zoom_level if not analysis_mode else MAP_ENTRY_ZOOM)
+	level_navigation_target=-1
+	depth_trip_target=-1
+	chained_cave_id=-1
+	move_path=path
+	selected_route=path.duplicate()
+	move_target=target
+	moving=true
+	status_label.text="TORNANT AL MARCADOR PELS CAMINS CONEGUTS"
+	_save_active_profile()
+
+func _draw_navigation_marker(canvas: CanvasItem) -> void:
+	if navigation_marker.is_empty() or surface_mode or taking_field_photo: return
+	if int(navigation_marker.get("seed",-1))!=seed_value or int(navigation_marker.get("level",-1))!=current_level: return
+	var point := _world_to_screen(navigation_marker.position)
+	if navigation_marker_texture==null: navigation_marker_texture=load("res://assets/sprites/marcador_retorn.png")
+	var width := clampf(12.0*zoom_level,22.0,64.0)
+	var size := Vector2(width,width*navigation_marker_texture.get_height()/navigation_marker_texture.get_width())
+	canvas.texture_filter=CanvasItem.TEXTURE_FILTER_NEAREST
+	canvas.draw_texture_rect(navigation_marker_texture,Rect2((point-size*Vector2(0.44,0.96)).round(),size),false)
+	canvas.draw_string(ThemeDB.fallback_font,point+Vector2(5,7),"MARCADOR",HORIZONTAL_ALIGNMENT_LEFT,-1,11,Color("ffdfa0"))
+
 func _recover_stuck_explorer() -> void:
 	if death_dialog.visible or discovery_dialog.visible or world.is_empty(): return
 	var origin := unit_position
@@ -8494,7 +8603,7 @@ func _find_graph_gallery_route(from: Vector2, to: Vector2, known_only: bool, com
 		for corridor in world.corridors:
 			if corridor.a!=room and corridor.b!=room: continue
 			if completed_only and not completed_gallery_traces.has(corridor.id): continue
-			if known_only and not completed_gallery_traces.has(corridor.id) and not discovered_exits.has(_exit_key(room,corridor.id)): continue
+			if known_only and not completed_gallery_traces.has(corridor.id): continue
 			var next: int = corridor.b if corridor.a==room else corridor.a
 			if parents.has(next): continue
 			parents[next]=room
@@ -8536,8 +8645,11 @@ func _is_known_room_route_point(point: Vector2, completed_only: bool = false) ->
 	var room := _cave_at_position(point)
 	if room >= 0 and _can_inspect_cave(room):
 		return true
+	for corridor_id in completed_gallery_traces:
+		var completed := _corridor_by_id(corridor_id)
+		if not completed.is_empty() and _point_inside_corridor(point,completed): return true
 	if completed_only:
-		return _point_in_lit_gallery(point)
+		return false
 	for corridor_id in walked_gallery_spans:
 		var corridor := _corridor_by_id(corridor_id)
 		if corridor.is_empty():
@@ -8787,7 +8899,27 @@ func _segment_is_walkable(start: Vector2, finish: Vector2, ignore_fog: bool = fa
 			return false
 	return true
 
+func _exit_marker_order(point: Vector2) -> Dictionary:
+	if not analysis_mode or selected_cave<0 or selected_cave!=current_cave_id: return {}
+	var screen := _world_to_screen(point)
+	var nearest := INF
+	var selected := {}
+	var radius := 14.0*clampf(zoom_level/3.5,1.35,1.8)
+	for exit_info in _visible_exits_for_cave(selected_cave):
+		var corridor := _corridor_by_id(exit_info.corridor_id)
+		if corridor.is_empty(): continue
+		if _is_gallery_exit_accessible(corridor,selected_cave) and _gallery_was_crossed(corridor): continue
+		var marker := _world_to_screen(exit_info.position+exit_info.direction*8.0)
+		var distance := screen.distance_to(marker)
+		if distance>radius or distance>=nearest: continue
+		nearest=distance
+		var destination: int=corridor.b if corridor.a==selected_cave else corridor.a
+		selected={"position":_arrival_point(destination,corridor.id),"cave_id":-1,"corridor_id":corridor.id,"inspection_cave_id":destination}
+	return selected
+
 func _resolve_order_target(point: Vector2) -> Dictionary:
+	var marked := _exit_marker_order(point)
+	if not marked.is_empty(): return marked
 	if analysis_mode:
 		var clicked_room := _cave_at_position(point)
 		if clicked_room >= 0 and clicked_room != current_cave_id and _can_inspect_cave(clicked_room):

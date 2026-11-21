@@ -38,12 +38,12 @@ func _run() -> void:
 	game._restart_after_death()
 	assert(game.seed_value!=old_seed and game.surface_mode)
 	assert(game.expedition_history.size()==old_history+1)
-	assert(game.suit_tier==3 and game.equipped_boots==2)
-	assert(game.supply_tiers.oxygen_tank==2 and game.defence_state.weapon_tier==2)
-	assert(game.equipped_modifiers.botes=="boots_ice")
+	assert(game.suit_tier==0 and game.equipped_boots==0)
+	assert(game.supply_tiers.is_empty() and game.defence_state.weapon_tier==0)
+	assert(game.equipped_modifiers.is_empty() and game.owned_modifiers.is_empty())
 	assert(game.world.get("recovery_caches_v1",[]).is_empty() and game.inactive_levels.is_empty())
 	assert(game.suit_integrity==100 and game.health==100)
-	print("DEATH_NEW_WORLD_OK seed_changed=true no_recovery=true upgrades_preserved=true repair_map_and_gallery=true")
+	print("DEATH_NEW_WORLD_OK seed_changed=true no_recovery=true equipment_reset_to_level_one=true repair_map_and_gallery=true")
 	game.queue_free()
 	await process_frame
 	await process_frame

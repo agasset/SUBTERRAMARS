@@ -71,6 +71,11 @@ func _draw() -> void:
 	shader.set_shader_parameter("facing", Vector2(game.explorer_facing.x, game.explorer_facing.y * 0.5))
 	shader.set_shader_parameter("beam_on", game.flashlight_on and game.flashlight_charge > 0.0)
 	shader.set_shader_parameter("beam_radius", game.call("_flashlight_radius") * game.zoom_level)
+	var enemy: Dictionary=game.defence_system.predator(game,game._cave_at_position(game.unit_position))
+	var hostile_visible: bool=not enemy.is_empty() and float(enemy.hp)>0 and bool(enemy.alert)
+	shader.set_shader_parameter("hostile_on",hostile_visible)
+	if hostile_visible:
+		shader.set_shader_parameter("hostile",game._world_to_screen(enemy.position)-Vector2(0,7)*game.zoom_level)
 	var blockers := PackedVector3Array()
 	for detail in game.world.get("ambience_v1", []):
 		if detail.kind != 1 or blockers.size() >= 8: continue

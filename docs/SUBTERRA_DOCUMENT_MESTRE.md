@@ -492,3 +492,7 @@ L’equip es desa i es millora al taller; la letalitat segueix la profunditat f�
 ## Revisió de fracàs confirmada — 21/11/2026
 
 Albert confirma que morir acaba l’expedició i inicia un món nou amb llavor nova. Els materials a sobre es perden sense recuperació. Es conserven catàleg, descobertes del perfil i millores permanents. Aquesta decisió substitueix expressament les regles anteriors de paquet recuperable i món conservat després de morir. Tornar normalment a base continua conservant el món actual. F8 és una recuperació local d’encallament, no un reinici ni un retorn a base.
+
+### Aclariment de reinici d’equip — 21/11/2026
+
+La nova expedició després de morir comença amb tot l’equip a nivell 1 i sense modificadors anteriors. Aquesta correcció substitueix la conservació de millores indicada a la revisió de fracàs anterior. Catàleg, descobertes del perfil i fites es conserven; les fites de reserves inicials no són nivells d’equip.

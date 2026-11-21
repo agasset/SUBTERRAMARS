@@ -25,6 +25,9 @@ func _run() -> void:
 		var approach: Vector2 = animal + direction * 24
 		if game._cave_at_position(approach) != room: continue
 		assert(game._fauna_blocks_player_step(approach,animal))
+		game.moving=true
+		assert(not game._fauna_blocks_player_step(approach,animal))
+		game.moving=false
 		assert(not game._fauna_blocks_player_step(animal,approach))
 		checked = true
 		break

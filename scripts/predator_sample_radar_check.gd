@@ -39,6 +39,9 @@ func _run() -> void:
 	game.defence_state.shield=40.0
 	game.defence_system.tick(game,0.02)
 	assert(game.defence_system.attack_left>0 and game.defence_system.hit_left>0)
+	assert(game.defence_system.combat_warning_left>0)
+	assert(game._fauna_is_visible_in_room(room))
+	assert(not game._has_undetectable_trace(room,true))
 	assert(game.defence_system.hit_shield>0 and game.defence_system.hit_health==0)
 	game.defence_system.attack_left=0.18
 	game.queue_redraw()
@@ -57,13 +60,28 @@ func _run() -> void:
 	assert(game._can_collect_flora_sample())
 	var points: int=game._research_points()
 	game.selected_fauna=-1
+	game.moving=true
+	game.move_path.assign([game.unit_position+Vector2(10,0)])
 	game._select_flora(game.defence_system.sprite_rect(game,enemy.position).get_center())
+	assert(not game.moving and game.move_path.is_empty())
 	assert(game.fauna_samples.has(room) and not game.fauna_samples[room])
 	assert(game._research_points()==points+1)
 	game._collect_flora_sample()
 	assert(game.fauna_samples.size()==1 and game._research_points()==points+1)
 	var saved: Dictionary=game._capture_saved_game()
 	assert(saved.level.fauna_samples.has(room))
+	assert(game.bio_scan_room==room and game.bio_scan_fauna)
+	game.biological_register[game.fauna_species_by_room[room]]=true
+	game._update_bio_scan(game._bio_scan_duration(game.bio_scanner_tier)+0.1)
+	assert(game.analyzed_fauna.has(room) and game.bio_scan_room==-1)
+	assert(game._has_pending_biology_action())
+	game._update_field_action_cards()
+	game.queue_redraw()
+	await process_frame
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png("res://reports/escaner_accions_pendents.png")
+	game.field_photos[game.fauna_species_by_room[room]]=game.OrganismPixelArt.BODY
+	assert(not game._has_pending_biology_action())
 	print("PREDATOR_SAMPLE_RADAR_OK warning=true radar_no_discovery=true corpse_sample_once=true saved=true")
 	game.queue_free()
 	await process_frame
