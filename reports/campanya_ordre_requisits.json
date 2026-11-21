@@ -1,0 +1,187 @@
+{
+	"excludes": [
+		"consumables",
+		"repairs",
+		"optional upgrades"
+	],
+	"legacy_world_unchanged": true,
+	"levels": [
+		{
+			"basic_scanner_species": 5,
+			"biome": 1,
+			"boundary": false,
+			"depth": 1,
+			"gate": "Escàner biològic Nv. 2 operatiu",
+			"iron_at_basic_tool": 19
+		},
+		{
+			"basic_scanner_species": 3,
+			"biome": 1,
+			"boundary": false,
+			"depth": 2,
+			"gate": "Escàner biològic Nv. 2 operatiu",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 4,
+			"biome": 1,
+			"boundary": true,
+			"depth": 3,
+			"gate": "Escàner biològic Nv. 2 operatiu",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 10,
+			"biome": 4,
+			"boundary": false,
+			"depth": 4,
+			"gate": "Capçal de precisió actiu · eina de mineria operativa",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 7,
+			"biome": 4,
+			"boundary": false,
+			"depth": 5,
+			"gate": "Capçal de precisió actiu · eina de mineria operativa",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 9,
+			"biome": 4,
+			"boundary": true,
+			"depth": 6,
+			"gate": "Capçal de precisió actiu · eina de mineria operativa",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 11,
+			"biome": 7,
+			"boundary": false,
+			"depth": 7,
+			"gate": "Grampons actius · botes operatives",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 8,
+			"biome": 7,
+			"boundary": false,
+			"depth": 8,
+			"gate": "Grampons actius · botes operatives",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 14,
+			"biome": 7,
+			"boundary": true,
+			"depth": 9,
+			"gate": "Grampons actius · botes operatives",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 8,
+			"biome": 10,
+			"boundary": false,
+			"depth": 10,
+			"gate": "Sola de drenatge activa · botes operatives",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 13,
+			"biome": 10,
+			"boundary": false,
+			"depth": 11,
+			"gate": "Sola de drenatge activa · botes operatives",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 16,
+			"biome": 10,
+			"boundary": true,
+			"depth": 12,
+			"gate": "Sola de drenatge activa · botes operatives",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 9,
+			"biome": 13,
+			"boundary": false,
+			"depth": 13,
+			"gate": "Sola tèrmica activa amb botes operatives, o aïllament tèrmic actiu amb vestit operatiu",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 8,
+			"biome": 13,
+			"boundary": false,
+			"depth": 14,
+			"gate": "Sola tèrmica activa amb botes operatives, o aïllament tèrmic actiu amb vestit operatiu",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 6,
+			"biome": 13,
+			"boundary": true,
+			"depth": 15,
+			"gate": "Sola tèrmica activa amb botes operatives, o aïllament tèrmic actiu amb vestit operatiu",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 8,
+			"biome": 16,
+			"boundary": false,
+			"depth": 16,
+			"gate": "Filtre de bioluminescència actiu · escàner operatiu",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 9,
+			"biome": 16,
+			"boundary": false,
+			"depth": 17,
+			"gate": "Filtre de bioluminescència actiu · escàner operatiu",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 8,
+			"biome": 16,
+			"boundary": true,
+			"depth": 18,
+			"gate": "Filtre de bioluminescència actiu · escàner operatiu",
+			"iron_at_basic_tool": 15
+		},
+		{
+			"basic_scanner_species": 29,
+			"biome": 19,
+			"boundary": true,
+			"depth": 19,
+			"gate": "Escàner biològic Nv. 3 operatiu",
+			"iron_at_basic_tool": 35
+		},
+		{
+			"basic_scanner_species": 13,
+			"biome": 20,
+			"boundary": false,
+			"depth": 20,
+			"gate": "",
+			"iron_at_basic_tool": 35
+		}
+	],
+	"minimum_gate_equipment_cost": {
+		"iron": 20,
+		"research": 7
+	},
+	"order": [
+		1,
+		4,
+		7,
+		10,
+		13,
+		16,
+		19,
+		20
+	],
+	"order_seed": 134027,
+	"tested_seeds": 50,
+	"unique_orders": 21
+}

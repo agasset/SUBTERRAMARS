@@ -29,8 +29,9 @@ Utilitza geometria i recursos provisionals propis. Les imatges de referència de
 - Ruta cap al fons i millores obligatòries assolibles sense bloquejos circulars. No exigir una espècie raríssima per progressar.
 - Intent de generació acotat i reserva segura si falla.
 - Recompenses idempotents. Guardar separadament perfil i partida de manera coherent.
-- Fracàs deixa material recuperable al món actual; no genera automàticament un món nou.
-- No afegir ecologia completa, cadenes alimentàries, combat, indústria, logística detallada ni necessitats quotidianes.
+- Revisió explícita d’Albert del 21/11/2026: morir acaba l’expedició i la següent sortida comença en un món nou. Els materials a sobre es perden sense recuperació. Conservar catàleg, descobertes del perfil i millores permanents.
+- No afegir ecologia completa, cadenes alimentàries, indústria, logística detallada ni necessitats quotidianes.
+- Excepció de disseny autoritzada explícitament per Albert el 20/11/2026: fauna depredadora que pot atacar, projector de polsos com a equip i escut personal, amb perill creixent segons la profunditat. La defensa no substitueix l’exploració científica com a objectiu principal. La revisió de fracàs del 21/11/2026 preval sobre la recuperació anterior.
 
 ## Verificació i continuïtat
 

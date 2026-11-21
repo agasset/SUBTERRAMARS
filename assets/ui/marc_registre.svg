@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" shape-rendering="crispEdges">
+<path d="M8 1H56V3H60V5H62V8H63V56H61V60H59V62H56V63H8V61H4V59H2V56H1V8H3V4H5V2H8Z" fill="#050e12" stroke="#527f89" stroke-width="2"/>
+<path d="M10 3H54" stroke="#b5d6d9" stroke-width="1"/>
+<path d="M10 6H30" stroke="#5de5ed" stroke-width="1"/>
+<path d="M10 60H54" stroke="#173a44" stroke-width="1"/>
+</svg>

@@ -57,3 +57,23 @@ Identitat gràfica: [Logo pixel art de Subterra: Marte.png](https://chatgpt.com/
 ## Estructura de profunditat confirmada — versió 1.3
 
 20 nivells totals. Biomes: 1–3, 4–6, 7–9, 10–12, 13–15 i 16–18. Els nivells 19 i 20 tenen identitat estructural especial reconeixible, amb coves, espècies i investigacions procedurals. Noms i trets concrets provisionals. Vegeu la secció 24 del mestre. Conservar les garanties de navegació, objectius assolibles i persistència. P0A continua amb un nivell; els tres nivells de prova no substitueixen la campanya de 20.
+
+## Acabat integrat de la campanya — 20/11/2026
+
+Els sis biomes i les dues zones finals comparteixen el mateix sistema de paviments pixel art repetits en coordenades del món, ordre de profunditat, llums, col·lisions i organismes. Cadascun utilitza la seva paleta i material. Les entrades que ja tenien base disposen de mòdul pixel art coherent; el Nucli conserva la funció final i no incorpora cap taller nou. Recursos i prompts: `PROMPTS_CAVERNES_CRISTALLINES.md` i `PROMPTS_BIOMES_RESTANTS.md`. Les imatges segueixen sent materials/sprites aplicats a geometria procedural, no fons fixos.
+
+### Ambientació i relleu per bioma — 20/11/2026
+
+Cristalls ambientals, formacions altes, goteres i forats cecs utilitzen sprites pixel art isomètrics específics dels vuit perfils. La boca natural del descens comparteix aquests materials abans de la instal·lació de l’ascensor. Els ressalts de terra i parets reutilitzen la textura i paleta del bioma amb geometria 2D de representació; no alteren l’ancoratge del terra ni el contracte de coordenades. Els petits desnivells són transitables; les formacions i forats reserven obstacles a la màscara compartida. Vegeu PROMPTS_AMBIENT_COVES.md.
+
+### Singularitats, aigua i defensa — 20/11/2026
+
+Cada perfil té una singularitat de silueta pròpia a singularitats_biomes.png. Goteres i llacs amplien els recursos existents i fixen l’extrem d’aigua al mur; les formacions pengen de la carena i les basses es retallen contra el contorn. Els quatre cossos de depredador tenen quatre orientacions isomètriques i variants locals; salut/alerta es dibuixen sense anelles a terra. El projector i escut formen part de l’equip. L’escut visual és un contorn angular amb resposta a impactes, i les icones de defensa segueixen la graella pixel art de la interfície. Prompts i recursos a PROMPTS_SINGULARITATS_DEPREDADORS.md.
+
+### Revisió d’escut i boca de descens — 21/11/2026
+
+L’escut no té cap marc, halo ni anella al voltant del personatge: estat i càrrega exclusivament a la seva targeta, al costat de Vida. Aquesta decisió substitueix el contorn angular anterior. L’accés descendent utilitzable té sprite propi amb escala, baranes i llums industrials; els forats ambientals mantenen roca natural. Punt de terra compartit amb l’accés lògic i escala de món lligada al zoom. Recurs i prompt a PROMPT_ACCES_DESCENS.md.
+
+### Llacs plans — 21/11/2026
+
+Les basses utilitzen basses_biomes_planes.png, marge rocós estret i textura zenital projectada sobre la planta amb la mateixa compressió vertical que el terra. Base tangent/interior de la sala amb extrem prim ancorat a paret; s'ometen emplaçaments que envaeixen decoració o base. Aquesta revisió substitueix la placa rocosa ampla dels llacs anteriors. Prompt a PROMPT_BASSES_PLANES.md. La fauna es representa sense anella violeta també a les icones.

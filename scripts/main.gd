@@ -3,6 +3,25 @@ extends Node2D
 const Generator = preload("res://scripts/world_generator.gd")
 const LocalSaveStore = preload("res://scripts/local_save_store.gd")
 const OrganismTraits = preload("res://scripts/organism_traits.gd")
+const CampaignRules = preload("res://scripts/campaign_rules.gd")
+const ExpeditionDefence = preload("res://scripts/expedition_defence.gd")
+var defence_system := ExpeditionDefence.new()
+var defence_state: Dictionary = ExpeditionDefence.defaults()
+var campaign_biome_order: Array = CampaignRules.CLASSIC_ORDER.duplicate()
+var discovered_biomes: Dictionary = {}
+
+func _biome_at_depth(depth: int) -> int:
+	return CampaignRules.biome_at_depth(depth,campaign_biome_order)
+
+func _biome_exit_requirement() -> String:
+	return CampaignRules.requirement(_biome_at_depth(current_level))
+
+func _biome_exit_is_ready() -> bool:
+	return not CampaignRules.is_boundary(current_level) or CampaignRules.requirement_met(self,_biome_at_depth(current_level))
+
+func _notice_biome_exit_requirement() -> void:
+	depth_trip_target = -1
+	_action_notice("DESCENS BLOQUEJAT · Requereix %s. Compra al taller o activa el modificador des de l’inventari." % _biome_exit_requirement())
 const AUTOSAVE_SECONDS := 3.0
 const SAVED_GAME_FIELDS := [
 	"seed_value", "current_level", "surface_mode", "analysis_mode", "current_cave_id",
@@ -42,6 +61,7 @@ const PANEL := Color("0c1b29")
 const CYAN := Color("5de5ed")
 const MUTED := Color("71909f")
 const ORANGE := Color("ffac62")
+const ISOMETRIC_ORGANISM_SIZE := 2.2
 const ANALYSIS_MIN_ZOOM := 1.4
 const ANALYSIS_MAX_ZOOM := 7.0
 const ANALYSIS_ENTRY_ZOOM_FACTOR := 0.85
@@ -53,6 +73,39 @@ const MAP_MIN_ZOOM := 0.12
 const ISO_VERTICAL_RATIO := 0.5
 const LEVEL_EXIT_BEACON_COLOR := Color("ffbf61")
 const CAVE_DETECTION_MARGIN := 80.0
+const OXIDIZED_BASE_TEXTURE = preload("res://assets/sprites/base_coves_oxidades_arran_terra.png")
+const OXIDIZED_FLOOR_TEXTURE = preload("res://assets/textures/terra_oxidada.png")
+const CRYSTALLINE_BASE_TEXTURE = preload("res://assets/sprites/base_cavernes_cristallines.png")
+const CRYSTALLINE_FLOOR_TEXTURE = preload("res://assets/textures/terra_cristallina.png")
+const OTHER_BIOME_FLOORS = preload("res://assets/textures/terres_biomes_atlas.png")
+const OTHER_BIOME_BASES = preload("res://assets/sprites/bases_biomes_atlas.png")
+const OTHER_BIOME_PROFILES := [7, 10, 13, 16, 19, 20]
+var biome_material_textures: Dictionary = {}
+var biome_module_textures: Dictionary = {}
+var game_audio: Node
+var action_notice_label: Label
+var action_notice_tween: Tween
+const BIOME_POOLS = preload("res://assets/sprites/basses_biomes_planes.png")
+var render_surface_details: Dictionary = {}
+const OXIDIZED_FLOOR_WORLD_PERIOD := 32.0
+const BIOME_ROCK_SPRITES = preload("res://assets/sprites/roques_biomes.png")
+const ROCK_VARIATIONS = preload("res://assets/sprites/roques_variants.png")
+const CAVE_WALL_TEXTURE = preload("res://assets/textures/paret_gruta.png")
+const CAVE_FORMATIONS = preload("res://assets/sprites/formacions_gruta.png")
+const SurfaceBaseArt = preload("res://scripts/surface_base_art.gd")
+var surface_base_art := SurfaceBaseArt.new()
+const CaveWallMesh = preload("res://scripts/cave_wall_mesh.gd")
+const OrganismPixelArt = preload("res://scripts/organism_pixel_art.gd")
+const MINERAL_ROCK_SPRITES = preload("res://assets/sprites/jaciments_minerals.png")
+const RESEARCH_MICROSCOPE = preload("res://assets/sprites/microscopi_recerca.png")
+var research_hud_texture: ImageTexture
+const EXPLORER_SPRITE = preload("res://assets/sprites/explorador_pixel_art.png")
+const ELEVATOR_SPRITE = preload("res://assets/sprites/ascensor_pixel_art.png")
+const DESCENT_SHAFT_SPRITE = preload("res://assets/sprites/acces_descens.png")
+var descent_shaft_image: Image
+const DEPLOYED_BEACON_SPRITE = preload("res://assets/sprites/balisa_desplegada.png")
+const ROOM_LANTERN = preload("res://assets/sprites/fanals.png")
+const GALLERY_FLOOR_LIGHT = preload("res://assets/sprites/llum_galeria.png")
 
 var world: Dictionary
 var seed_value := 134027
@@ -84,6 +137,11 @@ const DEPTH_REWARDS := {
 	19: "+1 ús inicial de l’escala plegable",
 }
 var deepest_reached := 0
+var depth_zone_headings: Dictionary = {}
+
+func _profile_biome_name(depth: int) -> String:
+	var biome := _biome_at_depth(maxi(1,depth))
+	return str(DEPTH_ZONE_NAMES[biome]) if discovered_biomes.has(biome) else "Bioma per descobrir"
 var starting_rewards_depth := 0
 var rewards_dialog: AcceptDialog
 const DEPTH_ZONE_NAMES := {
@@ -118,7 +176,7 @@ const LEVEL_STATE_FIELDS := [
 	"discovered_exits", "cave_floor_textures", "explored_caves", "visited_caves",
 	"detected_caves", "deployed_beacons", "used_beacons", "flora_sites",
 	"flora_species_by_room", "analyzed_flora", "fauna_sites", "fauna_species_by_room",
-	"fauna_patrol_ends", "fauna_time", "seen_fauna", "analyzed_fauna", "flora_samples", "fauna_samples",
+	"fauna_patrol_ends", "fauna_time", "fauna_pause", "seen_fauna", "analyzed_fauna", "flora_samples", "fauna_samples",
 	"material_sites", "mineral_types", "collected_materials", "rockfall_corridor_id", "rockfall_position",
 	"rockfall_remaining", "rockfall_hit", "descent_access"
 ]
@@ -162,6 +220,21 @@ var last_revealed_cell := Vector2i(-1, -1)
 var current_cave_id := -1
 var discovered_exits: Dictionary = {}
 var cave_floor_textures: Dictionary = {}
+# Transient rendering caches are never serialized into a profile/world.
+var render_cache_world: Dictionary = {}
+var render_cache_level := -1
+var render_room_polygons: Array[PackedVector2Array] = []
+var render_room_bounds: Array[Rect2] = []
+var render_corridor_walls: Dictionary = {}
+var render_visible_gallery_walls: Array = []
+var render_wall_meshes: Dictionary = {}
+var render_wall_groups: Dictionary = {}
+var render_room_wall_spans: Dictionary = {}
+var render_active_passage_id := -1
+var render_corridor_floors: Dictionary = {}
+var render_room_lights: Dictionary = {}
+var render_gallery_lights: Dictionary = {}
+
 var show_graph := true
 var show_contours := true
 var show_spawn := true
@@ -222,6 +295,10 @@ const STRIP_MEDKIT_SLOT := 18
 var quartz_in_pack := 0
 var magnetite_in_pack := 0
 var mineral_types: Dictionary = {}
+var mineral_hit_image: Image
+var mineral_hit_silhouettes: Dictionary = {}
+var resource_card_regions: Dictionary = {}
+var room_lantern_corner_cache: Dictionary = {}
 var buy_repair_kit_button: Button
 var use_repair_kit_button: Button
 var field_repair_menu: PopupMenu
@@ -235,6 +312,8 @@ var inventory_window: AcceptDialog
 var inventory_tabs: TabContainer
 var inventory_values: Array[Label] = []
 var inventory_details: Array[Label] = []
+var inventory_level_meters: Array[ProgressBar] = []
+var inventory_condition_meters: Array[ProgressBar] = []
 var inventory_strip_values: Array[Label] = []
 var inventory_strip_meters: Dictionary[int, ProgressBar] = {}
 var helmet_light_card: PanelContainer
@@ -286,12 +365,63 @@ const EQUIPMENT_MODIFIERS := {
 	"mining_crystal": ["mineria", "Capçal de precisió", "Permet extreure quars de les vetes cristal·lines.", "quars"],
 	"mining_hard": ["mineria", "Capçal reforçat", "Permet extreure magnetita de les vetes dures.", "magnetita"],
 	"scanner_ferric": ["escaner", "Filtre espectral fèrric", "Detecta la molsa i l’escarabat fèrrics.", "ferric"],
+	"scanner_abyss": ["escaner", "Filtre de bioluminescència", "Filtra la interferència bioluminescent del pas a les zones profundes.", "abyss"],
 }
 const MODIFIER_MATERIAL_COST := 3
 const MODIFIER_RESEARCH_COST := 1
 var owned_modifiers: Dictionary[String, bool] = {}
 var equipped_modifiers: Dictionary[String, String] = {}
 var modifier_buttons: Dictionary[String, Button] = {}
+var modifier_menus: Array[MenuButton] = []
+
+func _add_modifier_menu(parent: Control, slot: String) -> void:
+	if parent is VBoxContainer and parent.get_child_count()>0:
+		var title := parent.get_child(0)
+		var heading := HBoxContainer.new()
+		parent.add_child(heading)
+		parent.move_child(heading,0)
+		title.reparent(heading)
+		parent=heading
+	var menu := MenuButton.new()
+	menu.set_meta("equipment_slot", slot)
+	menu.add_theme_font_size_override("font_size", 13)
+	menu.custom_minimum_size=Vector2(48,28)
+	menu.mouse_default_cursor_shape=Control.CURSOR_POINTING_HAND
+	var frame := StyleBoxFlat.new()
+	frame.bg_color=Color("153744")
+	frame.border_color=Color("55c9d7")
+	frame.set_border_width_all(1)
+	frame.set_content_margin_all(4)
+	menu.add_theme_stylebox_override("normal",frame)
+	menu.add_theme_stylebox_override("hover",frame)
+	menu.get_popup().id_pressed.connect(func(index: int) -> void:
+		_apply_equipment_modifier(str(menu.get_popup().get_item_metadata(index))))
+	parent.add_child(menu)
+	modifier_menus.append(menu)
+
+func _update_modifier_menus() -> void:
+	for menu in modifier_menus:
+		var slot: String = menu.get_meta("equipment_slot")
+		var active: String = equipped_modifiers.get(slot, "")
+		menu.text = "MOD ✓" if not active.is_empty() else "MOD +"
+		menu.add_theme_color_override("font_color",Color("72f5ad") if not active.is_empty() else MUTED)
+		menu.tooltip_text = (str(EQUIPMENT_MODIFIERS[active][1]) + " · Actiu\n") if not active.is_empty() else "Cap modificador actiu\n"
+		menu.tooltip_text += "Activa o desactiva els modificadors adquirits des de qualsevol lloc."
+		var popup := menu.get_popup()
+		popup.clear()
+		for id: String in EQUIPMENT_MODIFIERS:
+			if EQUIPMENT_MODIFIERS[id][0] != slot or not owned_modifiers.has(id): continue
+			var index := popup.item_count
+			popup.add_check_item(str(EQUIPMENT_MODIFIERS[id][1]))
+			popup.set_item_metadata(index, id)
+			popup.set_item_checked(index, active == id)
+		if popup.item_count==0:
+			popup.add_item("Cap modificador adquirit · Compra’n a Equip i millores")
+			popup.set_item_disabled(0,true)
+			menu.tooltip_text="MODIFICADORS · Encara no en tens cap per a aquest equip. Compra’n a la base, a Equip i millores."
+		else:
+			menu.tooltip_text="CLICA MOD PER TRIAR · "+menu.tooltip_text
+		menu.disabled=false
 const MAX_EQUIPMENT_LEVEL := 20
 var equipment_research_spent := 0
 var supply_tiers: Dictionary[String, int] = {}
@@ -325,12 +455,21 @@ var map_return_button: Button
 var center_explorer_button: Button
 var descend_button: Button
 var base_return_button: Button
+var biome_base_return_button: Button
 var level_navigation_target := -1
 var descend_navigation_button: Button
+var unstuck_navigation_button: Button
 var level_panel: Control
 var equipment_bar: PanelContainer
 var level_title_label: Label
 var room_progress_label: Label
+var room_details_label: Label
+var room_details_panel: Control
+var room_details_title: Label
+var room_details_status: Label
+var room_details_meter: ProgressBar
+var room_details_rows: VBoxContainer
+var room_details_signature := ""
 var mining_cave := -1
 var mining_remaining := 0.0
 var navigation_panel: Control
@@ -340,6 +479,8 @@ var map_legend_panel: Control
 var map_options_section: Control
 var map_options_window: AcceptDialog
 var show_signal_rings := true
+var show_beacon_waves := true
+var beacon_waves_toggle: CheckButton
 var show_findings := true
 const FLASHLIGHT_USABLE_DOT := 0.68
 const FLORA_SPECIES := {
@@ -358,6 +499,14 @@ var flora_sites: Dictionary = {}
 var flora_species_by_room: Dictionary = {}
 var analyzed_flora: Dictionary = {}
 const FAUNA_SPECIES := {
+	"depredador_oxidat":{"biome":1,"predator":true,"color":"c96545","name":"Mantis cuirassada","description":"Depredador amb dues extremitats de tall. El seu atac es pot esquivar durant la preparació."},
+	"depredador_cristalli":{"biome":4,"predator":true,"color":"b587e4","name":"Escorpí de geoda","description":"Un depredador de closca cristal·lina i cua recurvada."},
+	"depredador_glacial":{"biome":7,"predator":true,"color":"a9e6ff","name":"Salamandra de glaç","description":"Mandíbules potents i cresta de gel. Es mou sobre el mateix sòl que l’explorador."},
+	"depredador_jardi":{"biome":10,"predator":true,"color":"8dd39e","name":"Aranya de les espores","description":"Caçador de potes llargues entre les formacions vegetals."},
+	"depredador_termic":{"biome":13,"predator":true,"color":"ed8055","name":"Mantis de brasa","description":"Una variant cuirassada que resisteix l’entorn tèrmic."},
+	"depredador_abissal":{"biome":16,"predator":true,"color":"81d8d8","name":"Assetjador abissal","description":"Depredador de sensors bioluminescents i extremitats angulars."},
+	"depredador_llindar":{"biome":19,"predator":true,"color":"e3c68b","name":"Escorpí del Llindar","description":"Variant de les zones profundes, amb atacs especialment perillosos."},
+	"depredador_nucli":{"biome":20,"predator":true,"color":"b8e8ee","name":"Assetjador del Nucli","description":"La variant més letal. L’escut, la distància i els polsos poden donar temps per retirar-se."},
 	"escarabat": {"name": "Escarabat de cendra", "description": "Un petit escarabat amb una closca ambre."},
 	"isopode": {"name": "Isòpode de pissarra", "description": "Una criatura de closca blavosa i segmentada que camina a poc a poc."},
 	"escarabat_ferric": {"name": "Escarabat fèrric", "description": "La closca rogenca es confon amb la pols de ferro de les galeries."},
@@ -377,6 +526,58 @@ const FAUNA_VARIANT_PATTERNS := ["llis", "una franja", "dues franges", "taques"]
 var fauna_species_by_room: Dictionary = {}
 var fauna_patrol_ends: Dictionary = {}
 var fauna_time := 0.0
+var fauna_pause: Dictionary = {}
+
+func _advance_fauna(delta: float) -> void:
+	var room := _cave_at_position(unit_position)
+	var previous := _fauna_position(room) if fauna_sites.has(room) else Vector2.INF
+	fauna_time += delta
+	if previous == Vector2.INF: return
+	var proposed := _fauna_position(room)
+	if proposed.distance_to(unit_position) < 22.0 and proposed.distance_to(unit_position) < previous.distance_to(unit_position):
+		fauna_pause[room] = float(fauna_pause.get(room, 0.0)) + delta
+
+func _fauna_blocks_player_step(start: Vector2, finish: Vector2) -> bool:
+	var room := _cave_at_position(finish)
+	if not fauna_sites.has(room): return false
+	var animal := _fauna_position(room)
+	return Geometry2D.get_closest_point_to_segment(animal, start, finish).distance_to(animal) < 22.0 and finish.distance_to(animal) < start.distance_to(animal)
+
+func _detour_around_fauna() -> Array[Vector2]:
+	var result: Array[Vector2] = []
+	if move_path.is_empty(): return result
+	var goal: Vector2 = move_path[0]
+	var room := _cave_at_position(unit_position)
+	if room<0 or _cave_at_position(goal)!=room: return result
+	var cell_size: float = world.cell_size
+	var start := Vector2i((unit_position/cell_size).floor())
+	var queue: Array[Vector2i] = [start]
+	var previous := {start:start}
+	var reached := Vector2i(-1,-1)
+	var head := 0
+	while head<queue.size() and head<4096:
+		var cell := queue[head]
+		head+=1
+		var point := unit_position if cell==start else (Vector2(cell)+Vector2.ONE*0.5)*cell_size
+		if not _fauna_blocks_player_step(point,goal) and _segment_is_walkable(point,goal) and point.distance_to(goal)<cell_size*2.0:
+			reached=cell
+			break
+		for direction in [Vector2i.RIGHT,Vector2i.LEFT,Vector2i.UP,Vector2i.DOWN]:
+			var next: Vector2i = cell+direction
+			if previous.has(next): continue
+			var next_point := (Vector2(next)+Vector2.ONE*0.5)*cell_size
+			if not _point_inside_cave_id(next_point,room): continue
+			if not _segment_is_walkable(point,next_point) or _fauna_blocks_player_step(point,next_point): continue
+			previous[next]=cell
+			queue.append(next)
+	if reached.x<0: return result
+	result.append(goal)
+	while reached!=start:
+		result.push_front((Vector2(reached)+Vector2.ONE*0.5)*cell_size)
+		reached=previous[reached]
+	return result
+var fauna_path_world: Dictionary = {}
+var fauna_safe_paths: Dictionary = {}
 var seen_fauna: Dictionary = {}
 var analyzed_fauna: Dictionary = {}
 var selected_fauna := -1
@@ -398,6 +599,7 @@ var discovery_species := ""
 var discovery_is_fauna := false
 var saved_photo_bytes: Dictionary = {}
 var taking_field_photo := false
+var discovery_capture_pending := false
 var field_camera_button: Button
 var base_catalog_button: Button
 var catalogs_panel: Control
@@ -409,6 +611,8 @@ var level_progress_values: Array[Label] = []
 var level_progress_meters: Array[ProgressBar] = []
 
 func _ready() -> void:
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	_build_ui()
 	_new_world(seed_value)
 	get_viewport().size_changed.connect(_layout_panels)
@@ -418,14 +622,18 @@ func _ready() -> void:
 	_resume_autosave()
 
 func _process(delta: float) -> void:
-	if discovery_dialog.visible or delete_profile_dialog.visible:
+	_ensure_solid_room_rocks()
+	if discovery_capture_pending or discovery_dialog.visible or delete_profile_dialog.visible:
 		return
+	if inventory_window.visible or field_repair_menu.visible: return
 	if death_dialog.visible or victory_dialog.visible or profiles_dialog.visible or depth_trip_dialog.visible or restart_run_dialog.visible or rewards_dialog.visible or history_dialog.visible:
 		return
 	autosave_elapsed += delta
 	if autosave_elapsed >= AUTOSAVE_SECONDS:
 		_save_active_profile()
 	_update_rockfall(delta)
+	defence_system.tick(self,delta)
+	if health<=0: return
 	if analysis_mode and moving and inspection_corridor_id >= 0 and rockfall_corridor_id < 0 and rockfall_cooldown <= 0.0 and randf() < delta / 180.0 and _cave_at_position(unit_position) < 0:
 		_warn_of_rockfall(inspection_corridor_id, true)
 	if not surface_mode and not world.is_empty():
@@ -458,7 +666,7 @@ func _process(delta: float) -> void:
 	_update_field_action_cards()
 	_update_resource_gain_cards()
 	if not surface_mode:
-		fauna_time += delta
+		_advance_fauna(delta)
 	if moving and analysis_mode:
 		if selected_cave != current_cave_id:
 			moving = false
@@ -513,8 +721,18 @@ func _process(delta: float) -> void:
 			if _rockfall_blocks_step(next_position, next_room):
 				status_label.text = "PAS BLOQUEJAT · CLICA EL SENYAL TARONJA PER NETEJAR"
 				break
+			if _fauna_blocks_player_step(unit_position, next_position):
+				var detour := _detour_around_fauna()
+				if not detour.is_empty():
+					move_path.pop_front()
+					for index in range(detour.size()-1,-1,-1): move_path.push_front(detour[index])
+				else:
+					moving=false
+					status_label.text="PAS OCUPAT PER FAUNA · TRIA UN ALTRE PUNT"
+				break
 			_apply_rockfall(next_position)
-			_record_gallery_step(unit_position, next_position)
+			if level_navigation_target < 0:
+				_record_gallery_step(unit_position, next_position)
 			var distance_walked := unit_position.distance_to(next_position)
 			var distance_with_broken_boots := maxf(0.0, distance_walked - boots_integrity / _boots_wear_per_unit())
 			boots_integrity = maxf(0.0, boots_integrity - distance_walked * _boots_wear_per_unit())
@@ -532,7 +750,9 @@ func _process(delta: float) -> void:
 				move_path.pop_front()
 			_update_current_cave(true)
 		if move_path.is_empty():
-			unit_position = move_target
+			# The last validated waypoint is the arrival; never jump to an
+			# original click beyond the reachable portion of the route.
+			move_target = unit_position
 			_update_current_cave()
 			moving = false
 			if analysis_mode:
@@ -585,7 +805,7 @@ func _process(delta: float) -> void:
 	_update_equipment_action_pulses()
 	_update_low_supply_warning(delta)
 	var entry := int(world.get("entry", -1))
-	var animate_beacons := entry >= 0 and (not analysis_mode or show_signal_rings)
+	var animate_beacons := entry >= 0 and show_beacon_waves
 	if _fauna_is_visible() or (not surface_mode and animate_beacons):
 		queue_redraw()
 
@@ -599,6 +819,7 @@ func _draw() -> void:
 	if analysis_mode:
 		_draw_isometric_room()
 		_draw_rockfall()
+		_draw_room_tooltip()
 		return
 	# Subtle star-field marks anchored to world coordinates, visible in the map only.
 	for i in range(90):
@@ -621,6 +842,8 @@ func _draw() -> void:
 			screen_contour.append(center + point * zoom_level)
 		screen_contour.append(screen_contour[0])
 		var fill := Color("102a38") if cave.id != world.entry else Color("183a3e")
+		if _room_is_complete(cave.id):
+			fill = Color("254938")
 		draw_colored_polygon(screen_contour, fill)
 		if show_spawn and cave.id == world.entry:
 			draw_circle(center, 7.0 * icon_scale, ORANGE)
@@ -664,7 +887,9 @@ func _draw() -> void:
 			_draw_beacon_waves(_world_to_screen(cave.position), _beacon_range() * zoom_level, 1.0, LEVEL_EXIT_BEACON_COLOR)
 		if _has_level_elevator(cave.id):
 			var access_text := _level_access_label(cave.id, true)
-			_draw_elevator_sign(_world_to_screen(_level_access_position(cave.id)) + Vector2(38, 16) * icon_scale, access_text, cave.id != world.entry, icon_scale, _is_unopened_shaft(cave.id))
+			_draw_elevator_sign(_world_to_screen(_level_access_position(cave.id)) + Vector2(0,22), access_text, cave.id != world.entry, maxf(0.95,icon_scale), _is_unopened_shaft(cave.id))
+		if _is_biome_workshop(cave.id):
+			_draw_workshop_badge(self, marker + Vector2(21, -19) * icon_scale, icon_scale)
 		if _is_final_room(cave.id):
 			_draw_final_room_marker(_world_to_screen(cave.position), icon_scale)
 		var tasks := _room_tasks(cave.id)
@@ -707,7 +932,7 @@ func _draw() -> void:
 		_draw_beacon_light(_world_to_screen(world.caves[world.entry].position), icon_scale, LEVEL_EXIT_BEACON_COLOR)
 
 	_draw_rockfall()
-	_draw_map_room_tooltip()
+	_draw_room_tooltip()
 
 func _room_gallery_progress(cave_id: int) -> Vector2i:
 	var progress := Vector2i.ZERO
@@ -735,32 +960,33 @@ func _draw_room_complete_badge(canvas: CanvasItem, center: Vector2, icon_scale: 
 		star.append(center + Vector2.from_angle(-PI * 0.5 + TAU * index / 10.0) * radius)
 	canvas.draw_colored_polygon(star, gold)
 
-func _draw_map_room_tooltip() -> void:
-	var mouse := get_global_mouse_position()
-	if dragging or _over_ui(mouse):
-		return
-	var cave_id := _map_hovered_room(mouse)
-	if cave_id < 0:
-		return
-	var scanned := explored_caves.has(cave_id)
-	if scanned:
-		var cave: Dictionary = world.caves[cave_id]
-		var outline := PackedVector2Array()
-		for point in _rounded_map_contour(cave.contour):
-			outline.append(_world_to_screen(cave.position + point))
-		outline.append(outline[0])
-		draw_polyline(outline, CYAN, 2.0, true)
-	var title := "Sala %02d" % (cave_id + 1)
+func _draw_workshop_badge(canvas: CanvasItem, center: Vector2, icon_scale: float = 1.0) -> void:
+	var outline := PackedVector2Array()
+	for point in [Vector2(-9, 7), Vector2(-9, -1), Vector2(0, -8), Vector2(9, -1), Vector2(9, 7)]:
+		outline.append(center + point * icon_scale)
+	canvas.draw_colored_polygon(outline, PANEL)
+	outline.append(outline[0])
+	canvas.draw_polyline(outline, CYAN, 1.4, true)
+	canvas.draw_rect(Rect2(center + Vector2(-2.5, 1) * icon_scale, Vector2(5, 6) * icon_scale), CYAN)
+
+func _room_is_complete(cave_id: int) -> bool:
+	if not explored_caves.has(cave_id):
+		return false
+	var progress := _room_tasks(cave_id)
+	return progress.x == progress.y
+
+func _draw_room_tooltip() -> void:
+	pass # Details are displayed in the fixed right-hand panel.
+
+func _room_detail_lines(cave_id: int) -> PackedStringArray:
 	var lines := PackedStringArray()
-	var complete := false
-	if scanned:
-		var progress := _room_tasks(cave_id)
-		complete = progress.x == progress.y
-		title += " · %d%% de tasques" % floori(100.0 * progress.x / progress.y)
-		if complete:
-			title += " · Completa"
+	if explored_caves.has(cave_id):
 		var galleries := _room_gallery_progress(cave_id)
 		lines = PackedStringArray(["Escaneig complet", "Galeries recorregudes · %d/%d" % [galleries.x, galleries.y]])
+		var closed := 0
+		for exit_info in _visible_exits_for_cave(cave_id):
+			if not _is_gallery_exit_accessible(_corridor_by_id(exit_info.corridor_id),cave_id): closed+=1
+		if closed>0: lines.append("Galeries tancades · %d" % closed)
 		for item in [
 			[flora_sites, analyzed_flora, "Flora analitzada", "Flora pendent d’analitzar"],
 			[fauna_sites, analyzed_fauna, "Fauna observada", "Fauna pendent d’observar"],
@@ -770,28 +996,28 @@ func _draw_map_room_tooltip() -> void:
 				lines.append(item[2] if item[1].has(cave_id) else item[3])
 		if _room_needs_ferric_filter(cave_id):
 			lines.append("Cal el filtre espectral fèrric")
+		if cave_id == world.entry:
+			lines.append("↑ Superfície · 0" if current_level == 1 else "↑ Accés a l’estrat −%d" % (current_level - 1))
+		if _has_descent_elevator(cave_id):
+			lines.append("↓ Accés a l’estrat −%d" % (current_level + 1))
+		if _is_biome_workshop(cave_id):
+			lines.append(_biome_base_name(current_level))
+		if current_level<20 and (cave_id==world.entry or cave_id==descent_access):
+			var ready := CampaignRules.requirement_met(self,_biome_at_depth(current_level))
+			lines.append(("Equip preparat · " if ready else "Per superar el bioma · ") + _biome_exit_requirement())
 	else:
 		lines.append("Escaneig · %d%%" % floori(_room_reveal_ratio(world.caves[cave_id]) * 100.0))
-	var size := Vector2(268, 40 + lines.size() * 18)
-	var view := _view_rect()
-	var limit := Vector2(maxf(view.position.x, view.end.x - size.x - 8.0), maxf(8.0, navigation_panel.position.y - size.y - 8.0))
-	var origin := (mouse + Vector2(16, 18)).clamp(Vector2(view.position.x, 8.0), limit)
-	var box := Rect2(origin, size)
-	draw_rect(box, PANEL)
-	draw_rect(box, Color("ffd17e") if complete else Color("448b99"), false, 1.0)
-	draw_string(ThemeDB.fallback_font, origin + Vector2(12, 22), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("ffd17e") if complete else CYAN)
-	for index in range(lines.size()):
-		draw_string(ThemeDB.fallback_font, origin + Vector2(12, 43 + index * 18), lines[index], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("dcecf0"))
+	return lines
 
-func _map_hovered_room(mouse: Vector2) -> int:
+func _hovered_room(mouse: Vector2) -> int:
 	var point := _screen_to_world(mouse)
 	for cave in world.caves:
 		if not _can_inspect_cave(cave.id):
 			continue
-		var contour: PackedVector2Array = _rounded_map_contour(cave.contour) if explored_caves.has(cave.id) else cave.contour
+		var contour: PackedVector2Array = _rounded_map_contour(cave.contour) if not analysis_mode and explored_caves.has(cave.id) else cave.contour
 		if Geometry2D.is_point_in_polygon(point - cave.position, contour):
 			return cave.id
-	if show_findings:
+	if show_findings and not analysis_mode:
 		var scale := clampf(zoom_level / MAP_ENTRY_ZOOM, 0.42, 1.15)
 		for cave in world.caves:
 			if not explored_caves.has(cave.id):
@@ -910,15 +1136,19 @@ func _draw_rockfall() -> void:
 	var scale := _isometric_object_scale() if analysis_mode else clampf(zoom_level / MAP_ENTRY_ZOOM, 0.42, 1.0)
 	var elapsed := ROCKFALL_SECONDS - rockfall_remaining
 	var rubble := _world_to_screen(rockfall_position)
-	draw_set_transform(rubble, 0.0, Vector2.ONE * scale)
-	for offset in [Vector2(-8, 1), Vector2(1, -4), Vector2(8, 3)]:
-		var stone := PackedVector2Array([offset + Vector2(-6, 2), offset + Vector2(-3, -5),
-			offset + Vector2(3, -6), offset + Vector2(7, 0), offset + Vector2(3, 5), offset + Vector2(-4, 5)])
-		draw_colored_polygon(stone, Color("94644f"))
-		stone.append(stone[0])
-		draw_polyline(stone, Color("e2a57b"), 1.2, true)
-	draw_arc(Vector2.ZERO, 16.0, 0, TAU, 22, ORANGE, 1.8, true)
-	draw_set_transform(Vector2.ZERO)
+	if analysis_mode:
+		var tangent: Vector2 = Vector2(corridor.exit_b - corridor.exit_a).normalized()
+		var across := tangent.orthogonal()
+		for i in range(9):
+			var offset := across * float(i % 3 - 1) * 4.0 + tangent * float(int(i / 3) - 1) * 3.0
+			_draw_biome_rock_sprite(rockfall_position + offset, 4.5 + float(i % 3), 1 + posmod(rockfall_corridor_id + i * 3, 7))
+		if rockfall_remaining > 0.0 and elapsed < 5.0:
+			for i in range(4):
+				var phase := fposmod(elapsed * 1.4 + float(i) * 0.23, 1.0)
+				var offset := across * float(i - 2) * 2.5 + Vector2(0, -lerpf(24.0, 0.0, phase))
+				_draw_biome_rock_sprite(rockfall_position + offset, 1.5 + float(i % 2), 1 + posmod(i * 2 + rockfall_corridor_id, 7))
+	else:
+		draw_rect(Rect2(rubble - Vector2(5, 3), Vector2(10, 6)), Color("ad7759"))
 	if rockfall_clear_remaining > 0.0:
 		var remaining := _rockfall_clear_percent()
 		var label_position := rubble + Vector2(-30, -22.0 * scale)
@@ -941,28 +1171,27 @@ func _draw_rockfall() -> void:
 		for index in range(12):
 			var phase := fposmod(elapsed * 1.15 + float(index) * 0.21, 1.0)
 			var offset := Vector2(sin(float(index) * 4.1) * (7.0 + phase * 15.0), lerpf(-24.0, 8.0, phase))
-			draw_circle(center + offset * scale, (2.0 + phase * 3.0) * scale, Color(0.91, 0.63, 0.40, 0.65 * (1.0 - phase)), true, -1.0, true)
+			var particle_size := maxf(1.0, roundf((2.0 + phase * 3.0) * scale))
+			draw_rect(Rect2((center + offset * scale).round(), Vector2.ONE * particle_size), Color(0.91, 0.63, 0.40, 0.65 * (1.0 - phase)))
 
-func _draw_signal_ranges() -> void:
+func _draw_signal_ranges(target: CanvasItem = null) -> void:
 	if not show_signal_rings or taking_field_photo:
 		return
-	_draw_signal_range(world.entry, Color("72e7d1"))
+	_draw_signal_range(world.entry, Color("72e7d1"), target)
 	for cave_id in deployed_beacons:
-		_draw_signal_range(cave_id, Color("abbeff"))
+		_draw_signal_range(cave_id, Color("abbeff"), target)
 
-func _draw_signal_range(cave_id: int, color: Color) -> void:
+func _draw_signal_range(cave_id: int, color: Color, target: CanvasItem = null) -> void:
+	var painter: CanvasItem = self if target == null else target
 	var center := _world_to_screen(world.caves[cave_id].position)
 	var radius := _beacon_range() * zoom_level
 	var vertical_ratio := ISO_VERTICAL_RATIO if analysis_mode else 1.0
-	if analysis_mode:
-		_draw_surface_ellipse(center, radius, radius * vertical_ratio, Color(color, 0.045))
-		_draw_beacon_waves(center, radius, vertical_ratio, color)
 	for index in range(80):
 		var angle := TAU * float(index) / 80.0
 		var end_angle := angle + TAU * 0.58 / 80.0
 		var start := center + Vector2(cos(angle), sin(angle) * vertical_ratio) * radius
 		var finish := center + Vector2(cos(end_angle), sin(end_angle) * vertical_ratio) * radius
-		draw_line(start, finish, Color(color, 0.40 if analysis_mode else 0.28), 1.2, true)
+		painter.draw_line(start, finish, Color(color, 0.40 if analysis_mode else 0.28), 1.2, true)
 
 func _draw_map_gallery(corridor: Dictionary) -> void:
 	for span in _map_gallery_spans(corridor):
@@ -1005,7 +1234,36 @@ func _map_gallery_spans(corridor: Dictionary) -> Array:
 		if explored_caves.has(corridor.b):
 			span.append(corridor.exit_b - corridor.direction_b * float(corridor.width) * 0.5)
 		return [span]
-	return walked_gallery_spans.get(corridor.id, [])
+	return _drawn_gallery_spans(corridor)
+
+func _drawn_gallery_spans(corridor: Dictionary) -> Array[PackedVector2Array]:
+	var result: Array[PackedVector2Array] = []
+	var route: PackedVector2Array = corridor.points
+	var intervals: Array[Vector2] = []
+	for trace: PackedVector2Array in walked_gallery_spans.get(corridor.id, []):
+		var first := float(route.size())
+		var last := -1.0
+		for point in trace:
+			var projection := _project_to_polyline(point, route)
+			var position := float(projection.segment)+float(projection.t)
+			first=minf(first,position)
+			last=maxf(last,position)
+		if last-first>0.0001: intervals.append(Vector2(first,last))
+	intervals.sort_custom(func(a: Vector2,b: Vector2) -> bool: return a.x<b.x)
+	var merged: Array[Vector2] = []
+	for interval in intervals:
+		if not merged.is_empty() and interval.x<=merged[-1].y+0.0001:
+			merged[-1]=Vector2(merged[-1].x,maxf(merged[-1].y,interval.y))
+		else: merged.append(interval)
+	for interval in merged:
+		var first_segment := mini(floori(interval.x),route.size()-2)
+		var last_segment := mini(floori(interval.y),route.size()-2)
+		var span := PackedVector2Array([route[first_segment].lerp(route[first_segment+1],interval.x-first_segment)])
+		for index in range(first_segment+1,last_segment+1): span.append(route[index])
+		var end := route[last_segment].lerp(route[last_segment+1],interval.y-last_segment)
+		if not span[-1].is_equal_approx(end): span.append(end)
+		result.append(span)
+	return result
 
 func _map_gallery_span_at_mouths(span: PackedVector2Array, corridor: Dictionary) -> PackedVector2Array:
 	if dev_mode or completed_gallery_traces.has(corridor.id) or span.size() < 2:
@@ -1203,90 +1461,23 @@ func _record_gallery_step(start: Vector2, finish: Vector2) -> void:
 		spans.append(span)
 	walked_gallery_spans[nearest_id] = spans
 
+func _surface_art_scale() -> float:
+	var available := _view_rect().size
+	return clampf(minf(available.x / 900.0, available.y / 750.0), 0.65, 2.2)
+
+func _surface_elevator_extent() -> Vector2:
+	return Vector2(56, 32) * _surface_art_scale()
+
 func _draw_surface_base() -> void:
-	var viewport := get_viewport_rect()
-	var size := viewport.size
-	var center := viewport.get_center()
-	draw_rect(Rect2(Vector2.ZERO, size), Color("211415"))
-	var sky := PackedVector2Array([Vector2.ZERO, Vector2(size.x, 0), Vector2(size.x, size.y * 0.46), Vector2(0, size.y * 0.46)])
-	draw_polygon(sky, PackedColorArray([Color("111522"), Color("17121c"), Color("bc6043"), Color("754037")]))
-	var sun := Vector2(size.x * 0.73, size.y * 0.125)
-	for layer in range(4, 0, -1):
-		draw_circle(sun, 30.0 + layer * 10.0, Color(1.0, 0.53, 0.29, 0.045), true, -1.0, true)
-	draw_circle(sun, 32.0, Color("f6b274"), true, -1.0, true)
-	var terrain_rng := RandomNumberGenerator.new()
-	terrain_rng.seed = int(posmod(seed_value * 23747 + 901, 0x7fffffff))
-	for layer in range(3):
-		var horizon := PackedVector2Array()
-		for index in range(25):
-			var fraction := float(index) / 24.0
-			var ridge := 0.27 + layer * 0.055 + 0.027 * sin(fraction * TAU * (1.7 + layer))
-			horizon.append(Vector2(size.x * fraction, size.y * (ridge + terrain_rng.randf_range(-0.028, 0.028))))
-		horizon.append(Vector2(size.x, size.y))
-		horizon.append(Vector2(0, size.y))
-		draw_colored_polygon(horizon, [Color("6d3b38"), Color("512c2b"), Color("392223")][layer])
-	var foreground := PackedVector2Array([
-		Vector2(0, size.y * 0.76), Vector2(size.x * 0.19, size.y * 0.68),
-		Vector2(size.x * 0.37, size.y * 0.74), Vector2(size.x * 0.57, size.y * 0.67),
-		Vector2(size.x * 0.78, size.y * 0.75), Vector2(size.x, size.y * 0.65),
-		Vector2(size.x, size.y), Vector2(0, size.y)
-	])
-	draw_colored_polygon(foreground, Color("2b191a"))
-	for index in range(120):
-		var rock_center := Vector2(terrain_rng.randf_range(18.0, size.x - 18.0), terrain_rng.randf_range(size.y * 0.43, size.y - 12.0))
-		if rock_center.distance_to(center) < minf(size.x, size.y) * 0.31:
-			continue
-		var rx := terrain_rng.randf_range(2.0, 12.0)
-		var ry := rx * terrain_rng.randf_range(0.32, 0.72)
-		var stone := _surface_ellipse_points(rock_center, rx, ry, 7)
-		draw_colored_polygon(stone, Color("49302b") if index % 2 == 0 else Color("321f20"))
-	var pad_center := center + Vector2(0, 21)
-	_draw_surface_ellipse(pad_center + Vector2(12, 21), 326, 192, Color("21171d"))
-	_draw_surface_ellipse(pad_center, 312, 178, Color("62443b"))
-	_draw_surface_ellipse(pad_center, 304, 170, Color("302c31"))
-	for lane in range(-2, 3):
-		var start := pad_center + Vector2(-240, lane * 23)
-		draw_line(start, start + Vector2(480, 0), Color("3f393c"), 1.0, true)
-	for side in [-1.0, 1.0]:
-		for step in range(10):
-			var angle := 0.20 + float(step) * 0.27
-			var lamp := pad_center + Vector2(cos(angle) * 307.0, sin(angle) * 173.0 * side)
-			draw_circle(lamp, 7.0, Color(1.0, 0.63, 0.32, 0.13), true, -1.0, true)
-			draw_circle(lamp, 2.4, Color("ffb978"), true, -1.0, true)
-	_draw_surface_module(Rect2(center + Vector2(-221, -98), Vector2(171, 53)), Color("718184"), Color("70e4e9"), "HÀBITAT")
-	_draw_surface_module(Rect2(center + Vector2(-42, -125), Vector2(158, 57)), Color("857162"), Color("ffac62"), "CONTROL")
-	var array_origin := center + Vector2(158, -92)
-	for panel in range(2):
-		var origin := array_origin + Vector2(panel * 63, 0)
-		draw_line(origin + Vector2(19, 24), origin + Vector2(10, 53), Color("6f5652"), 5.0, true)
-		var panel_shape := PackedVector2Array([origin, origin + Vector2(57, 0), origin + Vector2(42, 43), origin + Vector2(-15, 43)])
-		draw_colored_polygon(panel_shape, Color("17364c"))
-		var border := panel_shape.duplicate()
-		border.append(border[0])
-		draw_polyline(border, Color("79a4ae"), 2.0, true)
-		for column in range(1, 4):
-			var offset := Vector2(column * 14, 0)
-			draw_line(origin + offset, origin + offset + Vector2(-15, 43), Color("387896"), 1.0, true)
-		draw_line(origin + Vector2(-7, 22), origin + Vector2(50, 22), Color("387896"), 1.0, true)
+	var size := get_viewport_rect().size
+	var scale := _surface_art_scale()
 	var hatch := _surface_hatch_center()
-	_draw_surface_ellipse(hatch + Vector2(0, 5), 77, 47, Color("1e222a"))
-	_draw_surface_ellipse(hatch + Vector2(0, 2), 68, 39, Color("674c3b"))
-	for side in [-1.0, 1.0]:
-		var beacon := hatch + Vector2(side * 63.0, 6)
-		draw_circle(beacon, 13, Color(0.35, 0.91, 0.93, 0.15), true, -1.0, true)
-		draw_circle(beacon, 4, Color("8cf8ef"), true, -1.0, true)
-	var path_start := center + Vector2(-8, -50)
-	for step in range(8):
-		var amount := float(step) / 8.0
-		draw_circle(path_start.lerp(hatch, amount), 2.2, Color("dd8a4c", 0.72))
-	_draw_elevator_platform(hatch, Vector2(56, 32))
-	_draw_elevator_sign(hatch + Vector2(0, 55), "BAIXA A L’ESTRAT -1", true, 1.15)
-	# Small suit marker beside the hatch: the explorer starts at the base.
-	var explorer := hatch + Vector2(-87, -17)
-	draw_circle(explorer + Vector2(0, 8), 10, Color("101014"))
-	draw_rect(Rect2(explorer + Vector2(-6, -5), Vector2(12, 13)), Color("a9683c"))
-	draw_circle(explorer + Vector2(0, -9), 5, Color("b9c9bf"))
-	draw_circle(explorer + Vector2(1, -9), 2, CYAN)
+	surface_base_art.draw(self, size, hatch, scale, seed_value)
+	_draw_elevator_platform(hatch, _surface_elevator_extent())
+	_draw_elevator_sign(hatch + Vector2(0, 55) * scale, "BAIXA A L’ESTRAT -1", true, minf(1.8, 1.15 * scale))
+	var explorer := hatch + Vector2(-87, -17) * scale
+	draw_colored_polygon(_surface_ellipse_points(explorer, 12 * scale, 4.5 * scale, 20), Color("101014"))
+	_draw_explorer_sprite(explorer, 1.2 * scale, explorer_facing, false)
 
 func _surface_hatch_center() -> Vector2:
 	var viewport_size := Vector2(1440, 900)
@@ -1327,7 +1518,75 @@ func _draw_surface_module(rect: Rect2, color: Color, accent: Color, label: Strin
 	draw_circle(service_door.position + Vector2(19, 17), 2.0, accent)
 	draw_string(ThemeDB.fallback_font, rect.position + Vector2(11, rect.size.y - 11), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color("f0e4d9"))
 
+func _ensure_cave_render_cache() -> void:
+	if is_same(render_cache_world, world) and render_cache_level == current_level:
+		return
+	render_cache_world = world
+	render_cache_level = current_level
+	render_room_polygons.clear()
+	render_room_bounds.clear()
+	render_corridor_walls.clear()
+	render_wall_meshes.clear()
+	render_wall_groups.clear()
+	render_room_wall_spans.clear()
+	render_corridor_floors.clear()
+	render_room_lights.clear()
+	render_surface_details.clear()
+	render_gallery_lights.clear()
+	for room in world.caves:
+		var polygon := PackedVector2Array()
+		var bounds := Rect2(room.position + room.contour[0], Vector2.ZERO)
+		for point in room.contour:
+			var absolute: Vector2 = room.position + point
+			polygon.append(absolute)
+			bounds = bounds.expand(absolute)
+		render_room_polygons.append(polygon)
+		render_room_bounds.append(bounds)
+
+func _render_segment_on_screen(a: Vector2, b: Vector2, margin: float = 0.0) -> bool:
+	var start := _world_to_screen(a)
+	var finish := _world_to_screen(b)
+	var bounds := Rect2(start, Vector2.ZERO).expand(finish).grow(maxf(1.0, margin))
+	return get_viewport_rect().intersects(bounds)
+
+func _render_path_on_screen(points: PackedVector2Array, margin: float) -> bool:
+	for i in range(points.size() - 1):
+		if _render_segment_on_screen(points[i], points[i + 1], margin):
+			return true
+	return false
+
+func _cached_corridor_wall_spans(edges: Dictionary) -> Array:
+	var key := hash([edges.left, edges.right])
+	if render_corridor_walls.has(key):
+		return render_corridor_walls[key]
+	var spans: Array = []
+	for side_index in range(2):
+		var side: PackedVector2Array = edges.left if side_index == 0 else edges.right
+		var other: PackedVector2Array = edges.right if side_index == 0 else edges.left
+		for index in range(side.size() - 1):
+			var pieces: Array[PackedVector2Array] = [PackedVector2Array([side[index], side[index + 1]])]
+			var bounds := Rect2(side[index], Vector2.ZERO).expand(side[index + 1]).grow(0.01)
+			for room_index in range(render_room_polygons.size()):
+				if not bounds.intersects(render_room_bounds[room_index]):
+					continue
+				var remaining: Array[PackedVector2Array] = []
+				for piece in pieces:
+					remaining.append_array(Geometry2D.clip_polyline_with_polygon(piece, render_room_polygons[room_index]))
+				pieces = remaining
+				if pieces.is_empty():
+					break
+			for piece in pieces:
+				if piece.size() >= 2:
+					spans.append([piece[0], piece[1], 1.0 if side[index].y > other[index].y else -1.0,
+						float(index + 1) / float(side.size() - 1)])
+	if render_corridor_walls.size() >= 256:
+		render_corridor_walls.clear()
+	render_corridor_walls[key] = spans
+	return spans
+
 func _draw_isometric_room() -> void:
+	_ensure_cave_render_cache()
+	render_visible_gallery_walls.clear()
 	if selected_cave < 0 or selected_cave >= world.caves.size():
 		return
 	var cave: Dictionary = world.caves[selected_cave]
@@ -1338,12 +1597,14 @@ func _draw_isometric_room() -> void:
 			gallery = {}
 	var in_gallery := (not gallery.is_empty() or (moving and inspect_on_cave_arrival)) and _cave_at_position(unit_position) < 0
 	var passage_id := int(gallery.get("id", -1))
+	render_active_passage_id = passage_id
+	var occupied_room := _cave_at_position(unit_position)
 	var visible_rooms: Array[Dictionary] = []
 	for corridor in world.corridors:
 		if corridor.id == passage_id or _gallery_has_lamps(corridor):
 			_draw_isometric_passage(corridor, corridor.points)
 		else:
-			for span in walked_gallery_spans.get(corridor.id, []):
+			for span in _drawn_gallery_spans(corridor):
 				_draw_isometric_passage(corridor, span)
 	for room in world.caves:
 		if room.id != cave.id and not _can_inspect_cave(room.id) and (gallery.is_empty() or (room.id != gallery.a and room.id != gallery.b)):
@@ -1353,13 +1614,11 @@ func _draw_isometric_room() -> void:
 			continue
 		visible_rooms.append(room)
 		_draw_isometric_corridors(room, passage_id)
-		_draw_isometric_room_terrain(room)
+		_draw_isometric_room_terrain(room, room.id == occupied_room)
 		if _has_level_elevator(room.id):
 			_draw_isometric_base_access(room)
-		_draw_isometric_room_features(room.id)
 	var room_lit := _room_is_fully_lit(cave.id)
 	_draw_cave_lighting(flashlight_on and cave.id == current_cave_id, _point_in_lit_gallery(unit_position) if in_gallery else room_lit)
-	_draw_signal_ranges()
 	for corridor in world.corridors:
 		if _gallery_has_lamps(corridor):
 			_draw_gallery_lamps(_isometric_corridor_edges(corridor.points, float(corridor.width) * 0.65))
@@ -1367,39 +1626,231 @@ func _draw_isometric_room() -> void:
 		if _room_is_fully_lit(room.id):
 			_draw_room_lamps(room, room.id == world.entry or _has_descent_elevator(room.id))
 	for room in visible_rooms:
-		_draw_isometric_room_fixtures(room)
-	if in_gallery or _point_inside_selected_cave(unit_position) or _point_inside_isometric_exit(unit_position, cave) or _point_inside_connected_corridor(unit_position, cave):
-		_draw_isometric_explorer(unit_position)
+		if not taking_field_photo and _room_is_complete(room.id):
+			var scale := _isometric_object_scale()
+			_draw_room_complete_badge(self, _world_to_screen(room.position) + Vector2(0, -38) * scale, scale)
+	_draw_depth_sorted_objects(visible_rooms, in_gallery or _point_inside_selected_cave(unit_position) or _point_inside_isometric_exit(unit_position, cave) or _point_inside_connected_corridor(unit_position, cave))
 	if mining_cave == cave.id:
 		_draw_mining_progress(cave.id)
 	if bio_scan_room == cave.id:
 		var progress: float = bio_scan_elapsed / _bio_scan_duration(bio_scanner_tier)
 		_draw_field_progress(_world_to_screen(_bio_scan_target(cave.id, bio_scan_fauna)) - Vector2(0, 22), progress, CYAN)
-	elif not taking_field_photo:
-		if selected_flora == cave.id and analyzed_flora.has(cave.id):
-			_draw_field_progress(_world_to_screen(flora_sites[cave.id]) - Vector2(0, 22), 1.0, CYAN)
-		elif selected_fauna == cave.id and analyzed_fauna.has(cave.id):
-			_draw_field_progress(_world_to_screen(_fauna_position(cave.id)) - Vector2(0, 22), 1.0, CYAN)
+
+func _depth_order_less(a: Dictionary, b: Dictionary) -> bool:
+	if not is_equal_approx(a.point.y, b.point.y):
+		return a.point.y < b.point.y
+	return a.order < b.order
+
+func _draw_depth_sorted_objects(rooms: Array[Dictionary], include_player: bool) -> void:
+	var objects: Array[Dictionary] = []
+	for item in world.get("recovery_caches_v1",[]):
+		if not item.recovered and _is_revealed(item.position): objects.append({"kind":"recovery","point":item.position,"data":item,"order":1})
+	for group in render_visible_gallery_walls:
+		for span in group.spans:
+			objects.append({"kind": "wall", "point": (span[0] + span[1]) * 0.5, "data": span, "order": 0, "fade": group.fade})
+	for room in rooms:
+		var scanned := explored_caves.has(room.id)
+		for detail in world.get("ambience_v1", []):
+			if detail.cave_id == room.id and (scanned or _is_revealed(detail.position)):
+				objects.append({"kind":"ambience", "point":detail.position, "data":detail, "order":1})
+		if scanned:
+			for span in _room_wall_spans_for_cave(room):
+				objects.append({"kind": "wall", "point": (span[0] + span[1]) * 0.5, "data": span, "order": 0})
+		for rock in world.get("solid_room_rocks_v1", []):
+			if rock.cave_id != room.id:
+				continue
+			var visible := true
+			for offset in [Vector2.ZERO, Vector2(-7, 0), Vector2(7, 0), Vector2(0, -7), Vector2(0, 7)]:
+				if not scanned and not _is_revealed(rock.position + offset): visible = false
+			if visible:
+				objects.append({"kind": "rock", "point": rock.position, "data": rock, "order": 1})
+		for obstacle in world.obstacles:
+			if _point_inside_cave_id(obstacle.position, room.id) and (scanned or _is_revealed(obstacle.position)):
+				objects.append({"kind": "obstacle", "point": obstacle.position, "data": obstacle, "order": 1})
+		if _material_rock_is_visible(room.id):
+			objects.append({"kind": "mineral", "point": material_sites[room.id], "data": room.id, "order": 1})
+		if _flora_is_visible_in_room(room.id):
+			objects.append({"kind": "flora", "point": flora_sites[room.id], "data": room.id, "order": 2})
+		if _fauna_is_visible_in_room(room.id):
+			objects.append({"kind": "fauna", "point": _fauna_position(room.id), "data": room.id, "order": 3})
+		for animal in [false, true]:
+			var sites := fauna_sites if animal else flora_sites
+			if _has_undetectable_trace(room.id, animal) and (_room_is_fully_lit(room.id) or _is_revealed(sites[room.id])):
+				objects.append({"kind": "ghost", "point": _fauna_position(room.id) if animal else sites[room.id], "data": animal, "order": 3})
+		if _room_is_fully_lit(room.id):
+			for corner in _room_lantern_corners(room.contour):
+				var anchor: Vector2 = _room_lamp_anchor(room, corner)
+				objects.append({"kind": "lamp", "point": anchor, "data": null, "order": 2})
+		var fixture_anchor: Vector2 = room.position
+		if _is_biome_workshop(room.id):
+			var footprint := _biome_base_footprint(room)
+			if footprint.size() == 4:
+				fixture_anchor = (footprint[0] + footprint[1] + footprint[2] + footprint[3]) * 0.25
+		objects.append({"kind": "fixtures", "point": fixture_anchor, "data": room, "order": 2})
+	if include_player and not taking_field_photo:
+		objects.append({"kind": "player", "point": unit_position, "data": null, "order": 4})
+	objects.sort_custom(_depth_order_less)
+	var pending_walls: Array = []
+	var pending_fade := false
+	for object in objects:
+		if object.kind == "wall":
+			var fade: bool = object.get("fade", false)
+			if not pending_walls.is_empty() and fade != pending_fade:
+				_draw_wall_group(pending_walls, ["depth_batch", pending_walls, pending_fade], pending_walls[0][0], pending_fade)
+				pending_walls = []
+			pending_fade = fade
+			pending_walls.append(object.data)
+			continue
+		if not pending_walls.is_empty():
+			_draw_wall_group(pending_walls, ["depth_batch", pending_walls, pending_fade], pending_walls[0][0], pending_fade)
+			pending_walls = []
+		match object.kind:
+			"recovery": defence_system.draw_cache(self,self,object.data)
+			"ambience": preload("res://scripts/cave_ambience.gd").draw(self, object.data)
+			"rock":
+				if object.data.get("landmark",false): preload("res://scripts/biome_landmarks.gd").draw(self,object.data)
+				else: _draw_biome_rock_sprite(object.point, float(object.data.get("visual_radius", float(object.data.radius) * 2.0)), int(object.data.variant))
+			"obstacle": _draw_isometric_obstacle(object.data)
+			"mineral": _draw_mineral_rock(object.data)
+			"flora": _draw_flora_symbol(self, _world_to_screen(object.point), 1.4 * _isometric_organism_scale(), flora_species_by_room[object.data])
+			"fauna": _draw_isometric_fauna(object.point, object.data)
+			"ghost": _draw_ghost_organism(object.point, object.data)
+			"fixtures": _draw_isometric_room_fixtures(object.data)
+			"lamp":
+				var extent := Vector2(4.5, 13) * zoom_level
+				draw_texture_rect_region(ROOM_LANTERN, Rect2((_world_to_screen(object.point) - extent * Vector2(0.5, 0.98)).round(), extent), Rect2(310, 35, 275, 790))
+			"player": _draw_isometric_explorer(unit_position)
+	if not pending_walls.is_empty():
+		_draw_wall_group(pending_walls, ["depth_batch", pending_walls, pending_fade], pending_walls[0][0], pending_fade)
+
+	# Exit markers remain readable above the wall/object drawing pass.
+	for room in rooms:
+		_draw_isometric_exit_markers(room)
+		if _has_level_elevator(room.id):
+			_draw_elevator_sign(_world_to_screen(_level_access_position(room.id))+Vector2(0,22),_level_access_label(room.id),room.id!=world.entry,clampf(zoom_level/3.5,1.1,1.6),_is_unopened_shaft(room.id))
+
+func _draw_isometric_exit_markers(cave: Dictionary) -> void:
+	for exit_info in _visible_exits_for_cave(cave.id):
+		var corridor := _corridor_by_id(exit_info.corridor_id)
+		if corridor.is_empty(): continue
+		var blocked := not _is_gallery_exit_accessible(corridor,cave.id)
+		if not blocked and _gallery_was_crossed(corridor): continue
+		var marker := _world_to_screen(exit_info.position+exit_info.direction*8.0)
+		var scale := clampf(zoom_level/3.5,1.35,1.8)
+		draw_set_transform(marker,0.0,Vector2.ONE*scale)
+		draw_circle(Vector2.ZERO,13.0,Color("030a0e"))
+		if blocked:
+			_draw_blocked_exit_badge(self,Vector2.ZERO,1.0)
+		else:
+			draw_circle(Vector2.ZERO,10.0,Color("091e29"))
+			draw_circle(Vector2.ZERO,10.0,Color("bcefff"),false,2.0,true)
+			draw_string(ThemeDB.fallback_font,Vector2(-10,5),"?",HORIZONTAL_ALIGNMENT_CENTER,20,15,Color("e6fbff"))
+		draw_set_transform(Vector2.ZERO)
+
+func _draw_ghost_organism(point: Vector2, animal: bool) -> void:
+	if not animal:
+		var room := _cave_at_position(point)
+		var species: String = flora_species_by_room.get(room,"falguera")
+		var recipe := OrganismPixelArt.plant_recipe(species)
+		if not recipe.is_empty():
+			OrganismPixelArt.draw_plant(self,_world_to_screen(point),1.4*_isometric_organism_scale(),recipe,0.0,hash(species)&0x7fffffff,true)
+			return
+	var texture: Texture2D = OrganismPixelArt.BODY if animal else OrganismPixelArt.PLANT
+	var grid := Vector2(4, 4) if animal else Vector2(4, 3)
+	var cell := Vector2(texture.get_size()) / grid
+	var size := Vector2(22, 22 * cell.y / cell.x) * _isometric_organism_scale()
+	var source := Rect2(Vector2.ZERO if animal else Vector2(cell.x, 0), cell)
+	draw_texture_rect_region(texture, Rect2(_world_to_screen(point) - size * Vector2(0.5,0.85),size), source, Color(0.65,0.85,0.9,0.32))
+	if not animal:
+		var leaf_size := size * 0.65
+		for offset in [Vector2(-3,-6), Vector2(3,-9)]:
+			draw_texture_rect_region(texture, Rect2(_world_to_screen(point) + offset * _isometric_organism_scale() - leaf_size * Vector2(0.5,0.5), leaf_size), Rect2(Vector2(cell.x * 2,0),cell),Color(0.65,0.85,0.9,0.32))
 
 func _draw_isometric_room_features(cave_id: int) -> void:
 	if _material_rock_is_visible(cave_id):
-		_draw_isometric_obstacle({"position": material_sites[cave_id], "radius": 6.0, "id": cave_id})
-		if _material_is_visible(cave_id):
-			var spot := _material_marker_position(cave_id)
-			draw_set_transform(spot, 0.0, Vector2.ONE * _isometric_object_scale())
-			var vein := PackedVector2Array([Vector2(-8, 1), Vector2(-3, -2), Vector2(1, 0), Vector2(7, -3)])
-			var mineral_color := Color("f6cb75")
-			match _mineral_type(cave_id):
-				"quars": mineral_color = Color("cbaaf8")
-				"magnetita": mineral_color = Color("8abbdc")
-			draw_polyline(vein, mineral_color, 2.5, true)
-			draw_circle(Vector2(2, -2), 2.1, Color("fff1bd"), true, -1.0, true)
-			draw_set_transform(Vector2.ZERO)
+		_draw_mineral_rock(cave_id)
 	if _flora_is_visible_in_room(cave_id):
 		var plant_screen := _world_to_screen(flora_sites[cave_id])
-		_draw_flora_symbol(self, plant_screen, 1.4 * _isometric_object_scale(), flora_species_by_room[cave_id])
+		_draw_flora_symbol(self, plant_screen, 1.4 * _isometric_organism_scale(), flora_species_by_room[cave_id])
 	if _fauna_is_visible_in_room(cave_id):
 		_draw_isometric_fauna(_fauna_position(cave_id), cave_id)
+
+func _mineral_sprite_rect(cave_id: int) -> Rect2:
+	var cell_size := Vector2(MINERAL_ROCK_SPRITES.get_size()) / Vector2(4, 1)
+	var size := Vector2(24.0, 24.0 * cell_size.y / cell_size.x) * zoom_level
+	var anchor := _world_to_screen(material_sites[cave_id])
+	return Rect2((anchor - size * Vector2(0.5, 0.79)).round(), size)
+
+func _mineral_hit_test(cave_id: int, screen_point: Vector2) -> bool:
+	if not _material_is_visible(cave_id):
+		return false
+	var area := _mineral_sprite_rect(cave_id)
+	if not area.has_point(screen_point):
+		return false
+	if mineral_hit_image == null:
+		mineral_hit_image = MINERAL_ROCK_SPRITES.get_image()
+	var index := ["ferro", "quars", "magnetita"].find(_mineral_type(cave_id))
+	if index < 0:
+		return false
+	var cell_width := mineral_hit_image.get_width() / 4
+	var uv := (screen_point - area.position) / area.size
+	if not mineral_hit_silhouettes.has(index):
+		# A whole rock is one target, including cracks between its slabs.
+		# Cache its outer silhouette; transparent atlas margins stay unclickable.
+		var outline := PackedVector2Array()
+		for row in range(mineral_hit_image.get_height()):
+			var first := -1
+			var last := -1
+			for column in range(int(cell_width)):
+				if mineral_hit_image.get_pixel(index * int(cell_width) + column, row).a >= 0.15:
+					if first < 0:
+						first = column
+					last = column
+			if first >= 0:
+				outline.append(Vector2(first, row))
+				outline.append(Vector2(first, row + 1))
+				outline.append(Vector2(last + 1, row))
+				outline.append(Vector2(last + 1, row + 1))
+		mineral_hit_silhouettes[index] = Geometry2D.convex_hull(outline)
+	return Geometry2D.is_point_in_polygon(uv * Vector2(cell_width, mineral_hit_image.get_height()), mineral_hit_silhouettes[index])
+
+func _draw_mineral_rock(cave_id: int) -> void:
+	var index := 3
+	if _material_is_visible(cave_id):
+		index = ["ferro", "quars", "magnetita"].find(_mineral_type(cave_id))
+		if index < 0:
+			index = 3
+	var cell_size := Vector2(MINERAL_ROCK_SPRITES.get_size()) / Vector2(4, 1)
+	var source := Rect2(Vector2(index * cell_size.x, 0), cell_size)
+	var sprite_rect := _mineral_sprite_rect(cave_id)
+	var anchor := _world_to_screen(material_sites[cave_id])
+	var biome := _biome_at_depth(current_level)
+	var tint := Color(BIOME_ROCK[biome][2]).lerp(Color.WHITE, 0.65)
+	var ore_colors := [Color("f3b46d"), Color("e6d9ff"), Color("9ccee9")]
+	var clock := float(Time.get_ticks_msec()) / 1000.0 + float(cave_id) * 1.73
+	var pulse := 0.5 + 0.5 * sin(clock * 1.8)
+	if index < 3:
+		var ore_color: Color = ore_colors[index]
+		var center := anchor - Vector2(0, 3.0) * zoom_level
+		for ring in range(4, 0, -1):
+			var halo := _surface_ellipse_points(center, (7.0 + ring * 1.6) * zoom_level,
+				(2.5 + ring * 0.6) * zoom_level, 20)
+			draw_colored_polygon(halo, Color(ore_color, (0.012 + pulse * 0.008)))
+		# Keep the painted mineral readable without replacing its texture.
+		tint = tint.lerp(Color.WHITE, 0.22 + pulse * 0.12)
+	draw_texture_rect_region(MINERAL_ROCK_SPRITES,
+		sprite_rect, source, tint, false, true)
+	if index < 3 and not taking_field_photo:
+		var highlights := [Vector2(-3.5, -6.5), Vector2(1.5, -9.0), Vector2(5.5, -4.5)]
+		for i in range(highlights.size()):
+			var shimmer := pow(maxf(0.0, sin(clock * 2.4 + i * 2.1)), 10.0)
+			if shimmer < 0.08:
+				continue
+			var point: Vector2 = (anchor + highlights[i] * zoom_level).round()
+			var pixel := maxf(1.0, roundf(zoom_level * 0.35))
+			var ink := Color(Color(ore_colors[index]).lerp(Color.WHITE, 0.7), shimmer * 0.85)
+			draw_rect(Rect2(point - Vector2(pixel * 1.5, pixel * 0.5), Vector2(pixel * 3, pixel)), ink)
+			draw_rect(Rect2(point - Vector2(pixel * 0.5, pixel * 1.5), Vector2(pixel, pixel * 3)), ink)
 
 func _draw_isometric_room_fixtures(cave: Dictionary) -> void:
 	var beacon_position := _world_to_screen(cave.position)
@@ -1407,17 +1858,167 @@ func _draw_isometric_room_fixtures(cave: Dictionary) -> void:
 		_draw_final_room_marker(beacon_position, _isometric_object_scale())
 	var beacon_scale := minf(zoom_level / 4.0, 1.6)
 	if deployed_beacons.has(cave.id):
-		_draw_beacon_light(beacon_position + Vector2(0, -18) * _isometric_object_scale(), beacon_scale, Color("abbeff"))
+		_draw_deployed_beacon(cave.id)
 	if cave.id == world.entry:
 		_draw_beacon_light(beacon_position, beacon_scale, LEVEL_EXIT_BEACON_COLOR)
-		if _is_biome_workshop(cave.id) and _isometric_object_scale() >= 0.60:
-			draw_string(ThemeDB.fallback_font, beacon_position + Vector2(-55, -33) * _isometric_object_scale(),
-				"TALLER DEL BIOMA", HORIZONTAL_ALIGNMENT_LEFT, -1, maxi(8, roundi(12 * _isometric_object_scale())), CYAN)
-	if _has_level_elevator(cave.id):
-		var scale := _isometric_object_scale()
-		if scale >= 0.45:
-			var access_label_position := _world_to_screen(_level_access_position(cave.id)) + Vector2(0, _underground_elevator_extent().y + 20.0 * scale)
-			_draw_elevator_sign(access_label_position, _level_access_label(cave.id), cave.id != world.entry, scale, _is_unopened_shaft(cave.id))
+		if _is_biome_workshop(cave.id):
+			_draw_biome_base_module(cave)
+
+func _biome_module_texture(profile: int) -> Texture2D:
+	if profile == 1: return OXIDIZED_BASE_TEXTURE
+	if profile == 4: return CRYSTALLINE_BASE_TEXTURE
+	if biome_module_textures.has(profile): return biome_module_textures[profile]
+	var index := OTHER_BIOME_PROFILES.find(profile)
+	if index < 0: return null
+	var texture := AtlasTexture.new()
+	texture.atlas = OTHER_BIOME_BASES
+	var cell := Vector2(OTHER_BIOME_BASES.get_size()) / Vector2(3, 2)
+	texture.region = Rect2(Vector2(index % 3, floori(float(index) / 3.0)) * cell, cell)
+	texture.filter_clip = true
+	biome_module_textures[profile] = texture
+	return texture
+
+func _draw_biome_base_module(cave: Dictionary) -> void:
+	var footprint := _biome_base_footprint(cave)
+	if footprint.is_empty():
+		return
+	var profile := _biome_at_depth(current_level)
+	var base_texture := _biome_module_texture(profile)
+	if base_texture != null:
+		var anchor := Vector2.ZERO
+		for point in footprint:
+			anchor += point
+		anchor /= float(footprint.size())
+		var footprint_scale := footprint[0].distance_to(footprint[1]) / 52.0
+		var sprite_size := Vector2(base_texture.get_size()) * zoom_level * (float(OXIDIZED_BASE_TEXTURE.get_width()) / float(base_texture.get_width())) * 0.034 * footprint_scale
+		if profile in OTHER_BIOME_PROFILES:
+			# Atlas cells have tighter padding than the original standalone module.
+			sprite_size *= 0.62
+		# The contact point is the bottom of the front support, not the image margin.
+		var contact := 0.96 if profile in OTHER_BIOME_PROFILES else 0.88
+		var sprite_rect := Rect2(_world_to_screen(anchor) - sprite_size * Vector2(0.5, contact), sprite_size)
+		draw_texture_rect(base_texture, sprite_rect, false)
+		return
+	var ground := PackedVector2Array()
+	var roof := PackedVector2Array()
+	var scale := _isometric_object_scale()
+	var height := Vector2(0, -15.0 * zoom_level)
+	for corner in footprint:
+		var screen := _world_to_screen(corner)
+		ground.append(screen)
+		roof.append(screen + height)
+	var palette := _biome_base_palette(current_level)
+	var accent: Color = palette.accent
+	var secondary: Color = palette.secondary
+	var shell: Color = palette.shell
+	var shell_light: Color = palette.shell_light
+	# Low, stepped shadow keeps the footprint visibly seated on the same projected floor.
+	draw_colored_polygon(PackedVector2Array([
+		ground[0] + Vector2(0, 2.0 * scale), ground[1] + Vector2(0, 2.0 * scale),
+		ground[2] + Vector2(0, 2.0 * scale), ground[3] + Vector2(0, 2.0 * scale),
+	]), Color("080d13", 0.92))
+	# Four short feet touch the rock plane; their top anchors use the room's world projection.
+	for index in range(4):
+		var foot := ground[index].lerp(ground[(index + 1) % 4], 0.5)
+		var foot_size := 2.0 * scale
+		draw_rect(Rect2(foot + Vector2(-foot_size, -foot_size * 0.25), Vector2(foot_size * 2.0, foot_size)), Color("101820"))
+	draw_colored_polygon(PackedVector2Array([ground[0], ground[1], ground[2], ground[3]]), Color("11151d"))
+	draw_colored_polygon(PackedVector2Array([ground[1], ground[2], roof[2], roof[1]]), shell)
+	draw_colored_polygon(PackedVector2Array([ground[2], ground[3], roof[3], roof[2]]), Color("202b35"))
+	draw_colored_polygon(PackedVector2Array([ground[0], ground[1], roof[1], roof[0]]), Color("131d27"))
+	draw_colored_polygon(roof, shell_light)
+	draw_polyline(PackedVector2Array([roof[0], roof[1], roof[2], roof[3], roof[0]]), Color("a3aeb0"), maxf(1.0, scale))
+	# Roof service panels and a high contrast front edge survive the normal entry zoom.
+	var roof_mid := roof[0].lerp(roof[2], 0.5)
+	draw_line(roof[0].lerp(roof[1], 0.18), roof[0].lerp(roof[1], 0.82), Color("313d47"), maxf(1.0, scale))
+	draw_rect(Rect2(roof_mid + Vector2(-3.0, -1.5) * scale, Vector2(6.0, 3.0) * scale), Color("354653"))
+	var front_a := ground[3]
+	var front_b := ground[2]
+	# Biome accent strip beside the recognizable entry door.
+	_draw_base_front_panel(front_a, front_b, height, Rect2(0.08, 0.35, 0.08, 0.54), secondary)
+	_draw_base_front_panel(front_a, front_b, height, Rect2(0.19, 0.42, 0.22, 0.24), Color("101c26"))
+	_draw_base_front_panel(front_a, front_b, height, Rect2(0.215, 0.48, 0.17, 0.12), accent)
+	_draw_base_front_panel(front_a, front_b, height, Rect2(0.48, 0.0, 0.32, 0.78), Color("d47b45"))
+	_draw_base_front_panel(front_a, front_b, height, Rect2(0.515, 0.0, 0.25, 0.71), Color("121b24"))
+	_draw_base_front_panel(front_a, front_b, height, Rect2(0.545, 0.12, 0.035, 0.38), accent)
+	_draw_base_front_panel(front_a, front_b, height, Rect2(0.83, 0.36, 0.07, 0.16), accent)
+	_draw_base_front_panel(front_a, front_b, height, Rect2(0.92, 0.31, 0.035, 0.12), secondary)
+	for index in range(3):
+		var stripe := front_a.lerp(front_b, 0.12 + index * 0.09)
+		draw_line(stripe - height * 0.15, stripe + (front_b - front_a) * 0.035 - height * 0.72, Color("75818a"), maxf(1.0, scale))
+	# Twin service lamps make the front face read as an occupied entrance, not a crate.
+	var lamp_left := front_a.lerp(front_b, 0.43) + height * 0.72
+	var lamp_right := front_a.lerp(front_b, 0.86) + height * 0.72
+	draw_rect(Rect2(lamp_left - Vector2(1.5, 1.5) * scale, Vector2(3.0, 2.5) * scale), accent)
+	draw_rect(Rect2(lamp_right - Vector2(1.5, 1.5) * scale, Vector2(3.0, 2.5) * scale), secondary)
+	# Antenna mast and beacon remain on the roof and use the same camera transform.
+	var mast := roof[0].lerp(roof[1], 0.67)
+	var mast_tip := mast + height * 0.55
+	draw_line(mast, mast_tip, Color("a7bac2"), maxf(1.0, scale))
+	draw_rect(Rect2(mast_tip - Vector2(1.5, 1.5) * scale, Vector2(3.0, 3.0) * scale), accent)
+	draw_rect(Rect2(mast_tip + Vector2(2.0, 0.5) * scale, Vector2(2.0, 1.5) * scale), secondary)
+	if _isometric_object_scale() >= 0.60:
+		var label_position := roof[0].lerp(roof[2], 0.5) + height * 0.65
+		draw_string(ThemeDB.fallback_font, label_position - Vector2(130, 5),
+			_biome_base_name(current_level), HORIZONTAL_ALIGNMENT_CENTER, 260, 12, accent)
+
+func _biome_base_palette(depth: int) -> Dictionary:
+	var profile := _biome_at_depth(depth)
+	var accents := {
+		1: [Color("54d7e7"), Color("e69a59"), Color("202c37"), Color("596878")],
+		4: [Color("c39aff"), Color("f1a66b"), Color("292334"), Color("635875")],
+		7: [Color("86d8f5"), Color("f1b66c"), Color("1c303d"), Color("536c7a")],
+		10: [Color("a5df78"), Color("f1a66b"), Color("233127"), Color("596b51")],
+		13: [Color("ff9667"), Color("f5cb72"), Color("34231f"), Color("745144")],
+		16: [Color("e27be0"), Color("ffac62"), Color("2b2131"), Color("66516b")],
+		19: [Color("d3bd7a"), Color("ff9e68"), Color("2e302c"), Color("6a6654")],
+		20: [Color("75d6ce"), Color("ffc071"), Color("203034"), Color("53696b")],
+	}
+	var colors: Array = accents.get(profile, accents[1])
+	return {"accent": colors[0], "secondary": colors[1], "shell": colors[2], "shell_light": colors[3]}
+
+func _biome_base_footprint(cave: Dictionary) -> PackedVector2Array:
+	if cave.id == world.get("entry", -1) and world.has("base_solid_footprint_v1"):
+		return world.base_solid_footprint_v1
+	var contour: PackedVector2Array = cave.contour
+	var right := Vector2.from_angle(PI / 6.0)
+	var forward := right.orthogonal()
+	var positions := Array(contour)
+	var access_local: Vector2 = _level_access_position(cave.id) - cave.position if cave.id == world.get("entry", -1) else Vector2.ZERO
+	positions.sort_custom(func(a: Vector2, b: Vector2) -> bool: return a.distance_squared_to(access_local) > b.distance_squared_to(access_local))
+	# Older saves retain smaller entry rooms: search progressively smaller modules too.
+	for size: float in [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2]:
+		for inset: float in [0.62, 0.54, 0.70, 0.78, 0.44]:
+			for position: Vector2 in positions:
+				var anchor: Vector2 = position * inset
+				var footprint := PackedVector2Array()
+				var nearest_access_distance := INF
+				for corner in [Vector2(-26, -17), Vector2(26, -17), Vector2(26, 17), Vector2(-26, 17)]:
+					var point: Vector2 = anchor + (right * corner.x + forward * corner.y) * size
+					if not Geometry2D.is_point_in_polygon(point, contour):
+						break
+					nearest_access_distance = minf(nearest_access_distance, point.distance_to(access_local))
+					footprint.append(cave.position + point)
+				if footprint.size() != 4 or nearest_access_distance < 14.0:
+					continue
+				# Reserve the actual projected sprite rectangle, including its height.
+				# Ground distance alone cannot prevent the roof covering the elevator.
+				var projected_anchor := Vector2(anchor.x, anchor.y * ISO_VERTICAL_RATIO)
+				var visual_size := Vector2(OXIDIZED_BASE_TEXTURE.get_size()) * 0.034 * size
+				var visual_rect := Rect2(projected_anchor - Vector2(visual_size.x * 0.5, visual_size.y), visual_size)
+				var access_projected := Vector2(access_local.x, access_local.y * ISO_VERTICAL_RATIO)
+				var access_rect := Rect2(access_projected - Vector2(12, 10), Vector2(24, 25))
+				if not visual_rect.intersects(access_rect):
+					return footprint
+	return PackedVector2Array()
+
+func _draw_base_front_panel(a: Vector2, b: Vector2, height: Vector2, area: Rect2, ink: Color) -> void:
+	var left := a.lerp(b, area.position.x)
+	var right := a.lerp(b, area.end.x)
+	draw_colored_polygon(PackedVector2Array([
+		left + height * area.position.y, right + height * area.position.y,
+		right + height * area.end.y, left + height * area.end.y,
+	]), ink)
 
 func _is_final_room(cave_id: int) -> bool:
 	return current_level == CAMPAIGN_DEPTH and cave_id >= 0 and cave_id == world.get("objective", -1)
@@ -1432,9 +2033,13 @@ func _draw_final_room_marker(center: Vector2, marker_scale: float) -> void:
 	draw_polyline(diamond, CYAN, 1.5, true)
 	draw_circle(center, radius * 0.36, CYAN)
 
-func _draw_isometric_room_terrain(cave: Dictionary) -> void:
+func _draw_isometric_room_terrain(cave: Dictionary, occupied: bool) -> void:
 	var contour: PackedVector2Array = cave.contour
 	var room_is_scanned: bool = explored_caves.has(cave.id)
+	var floor_tint := Color.WHITE
+	if current_level==1: floor_tint=Color(0.76,0.88,0.94)
+	if occupied:
+		floor_tint *= Color(1.28, 1.23, 1.12)
 	var local_bounds := Rect2(contour[0], Vector2.ZERO)
 	for point in contour:
 		local_bounds = local_bounds.expand(point)
@@ -1447,14 +2052,28 @@ func _draw_isometric_room_terrain(cave: Dictionary) -> void:
 		for point in contour:
 			known_contour.append(_world_to_screen(cave.position + point))
 		draw_colored_polygon(known_contour, Color("432e2c"))
-	_draw_isometric_floor(cave, min_cell_x, max_cell_x, min_cell_y, max_cell_y)
-	_draw_procedural_rock_details(cave)
-	if room_is_scanned:
-		_draw_isometric_walls(cave)
-		_draw_isometric_contour(cave)
-	for obstacle in world.obstacles:
-		if _point_inside_cave_id(obstacle.position, cave.id) and (room_is_scanned or _is_revealed(obstacle.position)):
-			_draw_isometric_obstacle(obstacle)
+	_draw_isometric_floor(cave, min_cell_x, max_cell_x, min_cell_y, max_cell_y, floor_tint)
+	preload("res://scripts/cave_ambience.gd").draw_floor_relief(self,cave,floor_tint)
+	_draw_room_surface_details(cave)
+
+func _room_surface_details(cave: Dictionary) -> Array:
+	_ensure_cave_render_cache()
+	if render_surface_details.has(cave.id): return render_surface_details[cave.id]
+	var result: Array = preload("res://scripts/cave_wet_features.gd").pools(self,cave)
+	render_surface_details[cave.id]=result
+	return result
+
+func _draw_room_surface_details(cave: Dictionary) -> void:
+	var profile := [1,4,7,10,13,16,19,20].find(_biome_at_depth(current_level))
+	var cell := Vector2(1.0 / 4.0, 1.0 / 2.0)
+	var origin := Vector2(profile % 4, floori(float(profile) / 4.0)) * cell
+	var uvs := PackedVector2Array([origin, origin + Vector2(cell.x,0), origin + cell, origin + Vector2(0,cell.y)])
+	for pool in _room_surface_details(cave):
+		var shape := PackedVector2Array()
+		for point in pool.shape: shape.append(_world_to_screen(point))
+		var mapped := PackedVector2Array()
+		for uv in pool.get("local_uvs",[]): mapped.append(origin+uv*cell)
+		draw_polygon(shape, PackedColorArray([Color.WHITE]), mapped if not mapped.is_empty() else uvs, BIOME_POOLS)
 
 func _draw_room_state_badge(marker: Vector2, icon_scale: float, completed: bool, canvas: CanvasItem = self) -> void:
 	var color := Color("72e7d1") if completed else ACCESSIBLE_GALLERY_COLOR
@@ -1484,34 +2103,46 @@ func _draw_isometric_room_badges() -> void:
 		badges.append("fauna")
 	elif show_findings and completed and _has_undetectable_trace(cave_id, true):
 		badges.append("fauna_trace")
-	if _mineral_site_discovered(cave_id) and not collected_materials.has(cave_id):
+	if _mineral_site_discovered(cave_id):
 		badges.append("mineral")
 	if completed:
-		badges.append("completed")
+		badges.append("complete" if _room_is_complete(cave_id) else "completed")
 		if _has_accessible_pending_galleries(cave_id):
 			badges.append("galleries")
+	if cave_id == world.entry and completed:
+		badges.append("up")
+	if _has_descent_elevator(cave_id):
+		badges.append("down")
+	if _is_biome_workshop(cave_id) and completed:
+		badges.append("workshop")
 	for exit_info in _visible_exits_for_cave(cave_id):
 		if not _is_gallery_exit_accessible(_corridor_by_id(exit_info.corridor_id), cave_id):
 			badges.append("blocked")
 			break
 	for index in range(badges.size()):
-		var marker := center + Vector2((float(index) - (badges.size() - 1) * 0.5) * 27.0, 0)
+		var marker := center + Vector2((float(index) - (badges.size() - 1) * 0.5) * 29.0, 0)
 		match badges[index]:
 			"completed", "galleries":
 				_draw_room_state_badge(marker, 1.0, badges[index] == "completed", room_progress_label)
+			"complete":
+				_draw_room_complete_badge(room_progress_label, marker, 1.0)
+			"up", "down":
+				_draw_elevator_icon(room_progress_label, marker, badges[index] == "down", 0.9)
+			"workshop":
+				_draw_workshop_badge(room_progress_label, marker)
 			"blocked":
 				_draw_blocked_exit_badge(room_progress_label, marker, 0.75)
 			"mineral":
-				_draw_pending_mineral_badge(room_progress_label, marker)
+				_draw_mineral_badge(room_progress_label, marker, collected_materials.has(cave_id))
 			"flora_trace", "fauna_trace":
 				_draw_biological_trace(room_progress_label, marker, badges[index] == "fauna_trace")
 			"flora":
-				_draw_flora_symbol(room_progress_label, marker, 0.8, flora_species_by_room[cave_id])
+				_draw_flora_symbol(room_progress_label, marker + Vector2(0, 8), 1.12, flora_species_by_room[cave_id])
 				if not analyzed_flora.has(cave_id):
 					room_progress_label.draw_string(ThemeDB.fallback_font, marker + Vector2(-13, 4), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ORANGE)
 			"fauna":
 				var observed := analyzed_fauna.has(cave_id)
-				_draw_fauna_map_badge(room_progress_label, marker, fauna_species_by_room.get(cave_id, "escarabat"), 1.0, observed)
+				_draw_fauna_map_badge(room_progress_label, marker, fauna_species_by_room.get(cave_id, "escarabat"), 1.2, false, true)
 				if not observed:
 					room_progress_label.draw_string(ThemeDB.fallback_font, marker + Vector2(-13, 4), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ORANGE)
 
@@ -1527,17 +2158,18 @@ func _draw_biological_trace(canvas: CanvasItem, center: Vector2, fauna: bool, ma
 	canvas.draw_string(ThemeDB.fallback_font, center + Vector2(11, 5) * marker_scale,
 		"?", HORIZONTAL_ALIGNMENT_LEFT, -1, maxi(7, roundi(12 * marker_scale)), ink)
 
-func _draw_pending_mineral_badge(canvas: CanvasItem, center: Vector2) -> void:
+func _draw_mineral_badge(canvas: CanvasItem, center: Vector2, extracted: bool = false) -> void:
 	var rock := PackedVector2Array([
-		center + Vector2(-8, 2), center + Vector2(-5, -5), center + Vector2(4, -6),
-		center + Vector2(8, -1), center + Vector2(5, 5), center + Vector2(-4, 6),
+		center + Vector2(-9, 2), center + Vector2(-6, -6), center + Vector2(4, -8),
+		center + Vector2(9, -1), center + Vector2(6, 6), center + Vector2(-4, 8),
 	])
 	canvas.draw_colored_polygon(rock, Color("687579"))
 	canvas.draw_polyline(PackedVector2Array([
 		center + Vector2(-6, 2), center + Vector2(-2, -2),
 		center + Vector2(1, 0), center + Vector2(6, -3),
-	]), Color("f6cb75"), 1.7, true)
-	canvas.draw_string(ThemeDB.fallback_font, center + Vector2(10, 4), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ORANGE)
+	]), Color("9edbb8") if extracted else Color("f6cb75"), 1.7, true)
+	if not extracted:
+		canvas.draw_string(ThemeDB.fallback_font, center + Vector2(11, 4), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ORANGE)
 
 func _draw_blocked_exit_badge(canvas: CanvasItem, center: Vector2, marker_scale: float) -> void:
 	canvas.draw_circle(center, 10.0 * marker_scale, PANEL, true, -1.0, true)
@@ -1547,19 +2179,42 @@ func _draw_blocked_exit_badge(canvas: CanvasItem, center: Vector2, marker_scale:
 
 func _draw_mining_progress(cave_id: int) -> void:
 	var progress: float = 1.0 - mining_remaining / _mining_duration(mining_tool)
-	_draw_field_progress(_material_marker_position(cave_id) - Vector2(0, 16), progress, Color("ffe3a0"))
+	_draw_field_progress(_material_marker_position(cave_id) - Vector2(0, 16), progress, Color("ffe3a0"), "EXTRAIENT...")
 
 func _isometric_object_scale() -> float:
 	return minf(1.0, zoom_level / 3.5)
 
-func _draw_field_progress(anchor: Vector2, progress: float, color: Color) -> void:
-	var caption := "%d%%" % floori(progress * 100.0)
-	var scale := _isometric_object_scale()
-	if scale < 0.45:
+func _isometric_organism_scale() -> float:
+	# Organisms belong to world space; only HUD markers use the capped object scale.
+	return zoom_level / 3.5 * ISOMETRIC_ORGANISM_SIZE
+
+func _organism_photo_frame(species_id: String, fauna: bool, center: Vector2) -> Rect2:
+	var frame := Rect2(center - Vector2(54, 40), Vector2(108, 80))
+	if fauna and str(species_id).begins_with("depredador_"):
+		return frame.merge(Rect2(center-Vector2(12,15.2)*zoom_level,Vector2(24,16)*zoom_level).grow(8))
+	var recipe := _fauna_variant(species_id) if fauna else OrganismPixelArt.plant_recipe(species_id)
+	if not recipe.is_empty():
+		var bounds := OrganismPixelArt.animal_hit_rect(center, _isometric_organism_scale(), recipe) if fauna else OrganismPixelArt.plant_hit_rect(center, 1.4 * _isometric_organism_scale(), recipe)
+		frame = frame.merge(bounds.grow(8.0))
+	return frame
+
+func _draw_field_progress(anchor: Vector2, progress: float, color: Color, title: String = "ESCANEJANT...") -> void:
+	if taking_field_photo:
 		return
-	draw_set_transform(anchor, 0.0, Vector2.ONE * scale)
-	draw_string_outline(ThemeDB.fallback_font, Vector2(-36, 0), caption, HORIZONTAL_ALIGNMENT_CENTER, 72, 17, 5, BG)
-	draw_string(ThemeDB.fallback_font, Vector2(-36, 0), caption, HORIZONTAL_ALIGNMENT_CENTER, 72, 17, color)
+	var caption := "%d%%" % floori(progress * 100.0)
+	var view := _view_rect()
+	var panel_scale := clampf(zoom_level / 5.0, 0.65, 1.35)
+	var extent := Vector2(190, 62) * panel_scale
+	var origin := (anchor + Vector2(18, -68) * panel_scale).clamp(view.position + Vector2(4, 4), view.end - extent - Vector2(4, 4)).round()
+	draw_set_transform(origin, 0.0, Vector2.ONE * panel_scale)
+	var border := _inventory_frame_outline(Rect2(0, 0, 190, 62), 6)
+	draw_colored_polygon(border, Color("050e12"))
+	border.append(border[0])
+	draw_polyline(border, Color("527f89"), 1.0, false)
+	draw_string(ThemeDB.fallback_font, Vector2(10, 22), title, HORIZONTAL_ALIGNMENT_LEFT, 170, 15, color)
+	draw_rect(Rect2(10, 34, 126, 15), Color("12313b"))
+	draw_rect(Rect2(10, 34, floorf(126 * clampf(progress, 0, 1)), 15), color)
+	draw_string(ThemeDB.fallback_font, Vector2(140, 48), caption, HORIZONTAL_ALIGNMENT_LEFT, 46, 14, color)
 	draw_set_transform(Vector2.ZERO)
 
 func _has_level_elevator(cave_id: int) -> bool:
@@ -1568,14 +2223,26 @@ func _has_level_elevator(cave_id: int) -> bool:
 func _has_descent_elevator(cave_id: int) -> bool:
 	return current_level >= 1 and current_level < CAMPAIGN_DEPTH and cave_id >= 0 and cave_id == descent_access and explored_caves.has(cave_id)
 
-func _draw_beacon_waves(center: Vector2, reach: float, vertical_ratio: float, color: Color) -> void:
+func _draw_beacon_waves(center: Vector2, reach: float, vertical_ratio: float, color: Color, target: CanvasItem = null) -> void:
+	if not show_beacon_waves or taking_field_photo:
+		return
+	var painter: CanvasItem = self if target == null else target
 	var cycle_seconds := 12.8
 	for wave in range(2):
 		var phase := fposmod(fauna_time / cycle_seconds + wave * 0.5, 1.0)
 		var radius := maxf(1.0, reach * phase)
 		var points := _surface_ellipse_points(center, radius, radius * vertical_ratio, 96)
 		points.append(points[0])
-		draw_polyline(points, Color(color, lerpf(0.46, 0.18, smoothstep(0.8, 1.0, phase))), 1.4, true)
+		painter.draw_polyline(points, Color(color, lerpf(0.46, 0.18, smoothstep(0.8, 1.0, phase))), 1.4, true)
+
+func _draw_deployed_beacon(cave_id: int) -> void:
+	var anchor := _world_to_screen(world.caves[cave_id].position)
+	var source := Rect2(600, 40, 570, 800)
+	var size := Vector2(8.0, 8.0 * source.size.y / source.size.x) * zoom_level
+	var glow := _surface_ellipse_points(anchor, 4.0 * zoom_level, 1.6 * zoom_level, 20)
+	draw_colored_polygon(glow, Color(0.1, 0.85, 1.0, 0.10))
+	draw_texture_rect_region(DEPLOYED_BEACON_SPRITE,
+		Rect2((anchor - size * Vector2(0.5, 0.97)).round(), size), source, Color.WHITE, false, true)
 
 func _draw_beacon_light(center: Vector2, scale: float, beacon_color: Color) -> void:
 	for radius in [13.0, 10.0, 7.0]:
@@ -1586,72 +2253,103 @@ func _draw_beacon_light(center: Vector2, scale: float, beacon_color: Color) -> v
 		center + Vector2(0, tip), center + Vector2(-tip, 0)]), beacon_color)
 	draw_circle(center, 2.0 * scale, Color("eff2ff"), true, -1.0, true)
 
-func _draw_room_lamps(cave: Dictionary, at_entry: bool) -> void:
-	var center := _world_to_screen(cave.position)
-	var scale := _isometric_object_scale()
-	var radius_x := maxf(22.0 * scale, zoom_level * 7.5)
-	var radius_y := maxf(12.0 * scale, zoom_level * 3.8)
-	var fixture_size := clampf(zoom_level * 0.6, 2.5 * scale, 5.0)
-	var angles := [PI * 0.2, PI * 0.8, PI * 1.2, PI * 1.8]
-	var contour: PackedVector2Array = cave.contour
-	for index in range(angles.size()):
-		var angle: float = angles[index]
-		var lamp := center + Vector2(cos(angle) * radius_x, sin(angle) * radius_y) * 1.1
-		if not at_entry:
-			var edge := contour[floori(float(index) * contour.size() / angles.size())]
-			lamp = _world_to_screen(cave.position + edge * 0.65)
-		var glow := _surface_ellipse_points(lamp, radius_x * 3.8, radius_y * 3.8, 24)
-		var bright := Color(1.0, 0.61, 0.24, 0.14)
-		var fade := Color(bright, 0.0)
-		for segment in range(glow.size()):
-			var triangle := PackedVector2Array([lamp, glow[segment], glow[(segment + 1) % glow.size()]])
-			draw_polygon(triangle, PackedColorArray([bright, fade, fade]))
-		draw_circle(lamp, fixture_size + scale, Color("573322"), true, -1.0, true)
-		draw_circle(lamp, fixture_size * 0.65, Color("ffb65e"), true, -1.0, true)
-		draw_circle(lamp - Vector2(0, scale), fixture_size * 0.3, Color("fff0c3"), true, -1.0, true)
+func _room_lantern_corners(contour: PackedVector2Array) -> PackedVector2Array:
+	if contour.size() <= 4:
+		return contour
+	var key := hash(contour)
+	if room_lantern_corner_cache.has(key):
+		return room_lantern_corner_cache[key]
+	var best := PackedVector2Array()
+	var best_min := -1.0
+	var best_sum := -1.0
+	for a in range(contour.size() - 3):
+		for b in range(a + 1, contour.size() - 2):
+			for c in range(b + 1, contour.size() - 1):
+				for d in range(c + 1, contour.size()):
+					var points := PackedVector2Array([contour[a], contour[b], contour[c], contour[d]])
+					var nearest := INF
+					var total := 0.0
+					for i in range(3):
+						for j in range(i + 1, 4):
+							var distance := points[i].distance_squared_to(points[j])
+							nearest = minf(nearest, distance)
+							total += distance
+					if nearest > best_min or (is_equal_approx(nearest, best_min) and total > best_sum):
+						best = points
+						best_min = nearest
+						best_sum = total
+	if room_lantern_corner_cache.size() >= 512:
+		room_lantern_corner_cache.clear()
+	room_lantern_corner_cache[key] = best
+	return best
 
-func _draw_cave_lighting(light_on: bool, room_lit: bool) -> void:
-	var view := _view_rect()
-	var shadow := Color(RenderingServer.get_default_clear_color(), 0.12 if room_lit else 0.64)
-	if not light_on:
-		draw_rect(view, shadow)
-		return
-	var outer_radius := float(world.cell_size) * 6.0
-	for corner in [view.position, Vector2(view.end.x, view.position.y), view.end, Vector2(view.position.x, view.end.y)]:
-		outer_radius = maxf(outer_radius, unit_position.distance_to(_screen_to_world(corner)) * 1.05)
-	var light_radius := _flashlight_radius()
-	var radii := [0.1, light_radius * 0.75, light_radius * 1.55, outer_radius]
-	var beam_strength := [1.0, 0.95, 0.0, 0.0]
-	for segment in range(48):
-		var start := explorer_facing.rotated(TAU * segment / 48.0)
-		var end := explorer_facing.rotated(TAU * (segment + 1) / 48.0)
-		var start_light := smoothstep(0.55, 0.87, explorer_facing.dot(start))
-		var end_light := smoothstep(0.55, 0.87, explorer_facing.dot(end))
-		for ring in range(radii.size() - 1):
-			var inner: float = radii[ring]
-			var outer: float = radii[ring + 1]
-			var wedge := PackedVector2Array([
-				_world_to_screen(unit_position + start * inner),
-				_world_to_screen(unit_position + start * outer),
-				_world_to_screen(unit_position + end * outer),
-				_world_to_screen(unit_position + end * inner)])
-			draw_polygon(wedge, PackedColorArray([
-				Color(shadow, shadow.a * (1.0 - start_light * beam_strength[ring])),
-				Color(shadow, shadow.a * (1.0 - start_light * beam_strength[ring + 1])),
-				Color(shadow, shadow.a * (1.0 - end_light * beam_strength[ring + 1])),
-				Color(shadow, shadow.a * (1.0 - end_light * beam_strength[ring]))]))
+func _render_mesh_transform(origin: Vector2) -> Transform2D:
+	return Transform2D(Vector2(zoom_level, 0), Vector2(0, zoom_level), _world_to_screen(origin))
+
+func _render_project_delta(point: Vector2) -> Vector2:
+	return Vector2(point.x, point.y * ISO_VERTICAL_RATIO)
+
+func _room_lamp_anchor(cave: Dictionary, corner: Vector2) -> Vector2:
+	for inset in [16.0, 22.0, 30.0, 40.0]:
+		var point: Vector2 = cave.position + corner.move_toward(Vector2.ZERO, inset)
+		if _point_inside_cave_id(point, cave.id) and _distance_to_cave_boundary(point, cave) >= 10.0:
+			return point
+	return cave.position + corner.move_toward(Vector2.ZERO, 40.0)
+
+func _draw_room_lamps(cave: Dictionary, _at_entry: bool) -> void:
+	if not render_room_lights.has(cave.id):
+		var glow_mesh := CaveWallMesh._builder()
+		var lamp_mesh := CaveWallMesh._builder()
+		var source := Rect2(310, 35, 275, 790)
+		var texture_size := Vector2(ROOM_LANTERN.get_size())
+		var lamp_uvs := PackedVector2Array([source.position / texture_size,
+			Vector2(source.end.x, source.position.y) / texture_size, source.end / texture_size,
+			Vector2(source.position.x, source.end.y) / texture_size])
+		for corner in _room_lantern_corners(cave.contour):
+			var anchor: Vector2 = _render_project_delta(_room_lamp_anchor(cave, corner) - Vector2(cave.position))
+			var glow := _surface_ellipse_points(anchor, 28.5, 14.44, 24)
+			var bright := Color(1.0, 0.61, 0.24, 0.14)
+			for segment in range(glow.size()):
+				CaveWallMesh._triangle(glow_mesh, PackedVector2Array([anchor, glow[segment], glow[(segment + 1) % glow.size()]]),
+					PackedColorArray([bright, Color(bright, 0), Color(bright, 0)]))
+			var rect := Rect2(anchor - Vector2(4.5, 13) * Vector2(0.5, 0.98), Vector2(4.5, 13))
+			CaveWallMesh._quad(lamp_mesh, PackedVector2Array([rect.position, Vector2(rect.end.x, rect.position.y), rect.end, Vector2(rect.position.x, rect.end.y)]),
+				PackedColorArray([Color.WHITE]), lamp_uvs)
+		render_room_lights[cave.id] = [CaveWallMesh._mesh(glow_mesh), CaveWallMesh._mesh(lamp_mesh)]
+	var meshes: Array = render_room_lights[cave.id]
+	var transform := _render_mesh_transform(cave.position)
+	draw_mesh(meshes[0], null, transform)
+
+func _draw_cave_lighting(_light_on: bool, _room_lit: bool) -> void:
+	pass # The shared lighting overlay runs after all world objects.
 
 func _draw_isometric_fauna(position: Vector2, cave_id: int) -> void:
+	var hostile := defence_system.predator(self,cave_id)
+	if not hostile.is_empty():
+		defence_system.draw_creature(self,hostile)
+		return
 	var direction := Vector2.RIGHT
 	if fauna_patrol_ends.has(cave_id):
 		var origin: Vector2 = fauna_sites[cave_id]
 		direction = origin.direction_to(fauna_patrol_ends[cave_id])
-	direction *= 0.38
+	direction *= 0.38 * ISOMETRIC_ORGANISM_SIZE
 	var across := direction.orthogonal()
 	var species_id: String = fauna_species_by_room.get(cave_id, "escarabat")
 	var variant := _fauna_variant(species_id)
+	if OrganismPixelArt.supports_animal(species_id):
+		var velocity := _fauna_position(cave_id, 0.12) - _fauna_position(cave_id, -0.12)
+		var facing := velocity
+		if facing.is_zero_approx():
+			facing = direction
+			if fauna_patrol_ends.has(cave_id) and position.distance_to(fauna_patrol_ends[cave_id]) < 1.0:
+				facing = -direction
+		facing.y *= ISO_VERTICAL_RATIO
+		OrganismPixelArt.draw_animal(self, _world_to_screen(position), _isometric_organism_scale(),
+			variant, facing, 0.0 if taking_field_photo else fauna_time,
+			not velocity.is_zero_approx() and not taking_field_photo, FAUNA_VARIANT_COLORS)
+		return
 	if not variant.is_empty():
-		_draw_fauna_variant(self, _world_to_screen(position), species_id, variant, _isometric_object_scale())
+		_draw_fauna_variant(self, _world_to_screen(position), species_id, variant, _isometric_organism_scale())
 		return
 	var color := _fauna_color(species_id)
 	if _fauna_is_segmented(species_id):
@@ -1695,17 +2393,21 @@ func _draw_isometric_base_access(cave: Dictionary) -> void:
 		_draw_elevator_platform(Vector2.ZERO, extent / scale)
 		draw_set_transform(Vector2.ZERO)
 		return
-	var rim := PackedVector2Array()
-	var opening := PackedVector2Array()
-	for index in range(16):
-		var angle := TAU * float(index) / 16.0
-		var radial := Vector2(cos(angle), sin(angle)) * extent * (0.88 + 0.11 * cos(angle * 5.0))
-		rim.append(center + radial)
-		opening.append(center + radial * 0.77 + Vector2(0, 2))
-	draw_colored_polygon(rim, Color("523b34"))
-	draw_colored_polygon(opening, Color("080c12"))
-	rim.append(rim[0])
-	draw_polyline(rim, Color("97694e"), 1.7, true)
+	draw_texture_rect(DESCENT_SHAFT_SPRITE,_descent_shaft_rect(cave.id),false)
+
+func _descent_shaft_rect(cave_id: int) -> Rect2:
+	var width := _underground_elevator_extent().x*2.6
+	var size := Vector2(width,width*float(DESCENT_SHAFT_SPRITE.get_height())/DESCENT_SHAFT_SPRITE.get_width())
+	return Rect2((_world_to_screen(_level_access_position(cave_id))-size*Vector2(0.5,0.64)).round(),size)
+
+func _descent_shaft_hit(point: Vector2, cave_id: int) -> bool:
+	if not _is_unopened_shaft(cave_id): return false
+	var rect := _descent_shaft_rect(cave_id)
+	if not rect.has_point(point): return false
+	if descent_shaft_image==null: descent_shaft_image=DESCENT_SHAFT_SPRITE.get_image()
+	var uv := (point-rect.position)/rect.size
+	var pixel := Vector2i(uv*Vector2(descent_shaft_image.get_size())).min(descent_shaft_image.get_size()-Vector2i.ONE).max(Vector2i.ZERO)
+	return descent_shaft_image.get_pixelv(pixel).a>=0.15
 
 func _is_unopened_shaft(cave_id: int) -> bool:
 	return _has_descent_elevator(cave_id) and not inactive_levels.has(current_level + 1)
@@ -1721,26 +2423,17 @@ func _elevator_outline(center: Vector2, extent: Vector2) -> PackedVector2Array:
 	return outline
 
 func _draw_elevator_platform(center: Vector2, extent: Vector2) -> void:
-	draw_colored_polygon(_elevator_outline(center + Vector2(0, 5), extent), Color("11171c"))
-	var deck := _elevator_outline(center, extent)
-	draw_colored_polygon(deck, Color("55646a"))
-	draw_colored_polygon(_elevator_outline(center, extent * 0.84), Color("273840"))
-	deck.append(deck[0])
-	draw_polyline(deck, LEVEL_EXIT_BEACON_COLOR, 1.8, true)
-	for step in range(-2, 3):
-		var y := extent.y * step * 0.23
-		draw_line(center + Vector2(-extent.x * 0.68, y), center + Vector2(extent.x * 0.68, y), Color("52636c"), 1.3, true)
-	for side in [-1.0, 1.0]:
-		var rear := center + Vector2(extent.x * 0.84 * side, -extent.y * 0.56)
-		var front := center + Vector2(extent.x * 0.84 * side, extent.y * 0.41)
-		var height := Vector2(0, -extent.y * 0.64)
-		draw_line(rear, rear + height, Color("83959a"), 2.4, true)
-		draw_line(front, front + height, Color("83959a"), 2.4, true)
-		draw_line(rear + height, front + height, Color("bdc8c9"), 2.5, true)
-		draw_circle(rear + height, 2.0, CYAN, true, -1.0, true)
+	# The platform deck stays on the existing ground anchor and interaction area.
+	var source := Rect2(215, 160, 1345, 610)
+	var width := extent.x * 2.1
+	var size := Vector2(width, width * source.size.y / source.size.x)
+	draw_texture_rect_region(ELEVATOR_SPRITE,
+		Rect2((center - size * Vector2(0.5, 0.56)).round(), size), source, Color.WHITE, false, true)
 
 func _level_access_label(cave_id: int, short: bool = false) -> String:
 	if cave_id != world.entry:
+		if not _biome_exit_is_ready():
+			return "Equip pendent" if short else "DESCENS BLOQUEJAT · PREPARA L’EQUIP"
 		var depth := -(current_level + 1)
 		if _is_unopened_shaft(cave_id):
 			return "Forat · %d" % depth if short else ("BAIXA AMB L’ESCALA · %d" % depth if _ladder_uses_left() > 0 else "ESCALA ESGOTADA")
@@ -1766,12 +2459,11 @@ func _draw_elevator_sign(center: Vector2, caption: String, down: bool, scale: fl
 	var font_size := maxi(9, roundi(13 * scale))
 	var width := font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 	var start := center - Vector2((width + 22.0 * scale) * 0.5, 0)
+	var plate := Rect2(start-Vector2(8,12)*scale,Vector2(width+38*scale,26*scale))
+	draw_rect(plate,Color("08131a"))
+	draw_rect(plate,Color("d39a4d"),false,1.5)
 	var icon_center := start + Vector2(8.0 * scale, 0)
-	if shaft:
-		draw_circle(icon_center, 6.0 * scale, BG, true, -1.0, true)
-		draw_circle(icon_center, 6.0 * scale, LEVEL_EXIT_BEACON_COLOR, false, 1.3, true)
-	else:
-		_draw_elevator_icon(self, icon_center, down, scale)
+	_draw_elevator_icon(self, icon_center, down, scale)
 	draw_string(font, start + Vector2(22.0 * scale, font_size * 0.32), caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, LEVEL_EXIT_BEACON_COLOR)
 
 func _room_reveal_ratio(cave: Dictionary) -> float:
@@ -1798,9 +2490,9 @@ func _room_reveal_ratio(cave: Dictionary) -> float:
 				visible += 1
 	return float(visible) / float(maxi(1, total))
 
-func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int, max_y: int) -> void:
-	if explored_caves.has(cave.id):
-		_draw_textured_cave_floor(cave)
+func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int, max_y: int, tint: Color) -> void:
+	if analysis_mode:
+		_draw_textured_cave_floor(cave, tint)
 		return
 	var terrain: PackedByteArray = world.terrain_mask
 	var revealed: PackedByteArray = revealed_mask
@@ -1811,7 +2503,7 @@ func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int,
 	var room_shape := PackedVector2Array()
 	for point in cave.contour:
 		room_shape.append(cave.position + point)
-	var texture := _get_cave_floor_texture(cave.id)
+	var texture := _get_cave_room_floor_texture(cave.id)
 	var previous_repeat := texture_repeat
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	for y in range(min_y, max_y + 1):
@@ -1827,10 +2519,10 @@ func _draw_isometric_floor(cave: Dictionary, min_x: int, max_x: int, min_y: int,
 				cell_center + Vector2(-half_tile, half_tile)
 			])
 			for clipped_shape in Geometry2D.intersect_polygons(world_points, room_shape):
-				_draw_textured_floor_shape(clipped_shape, texture)
+				_draw_textured_floor_shape(clipped_shape, texture, tint)
 	texture_repeat = previous_repeat
 
-func _draw_textured_floor_shape(shape: PackedVector2Array, texture: Texture2D) -> void:
+func _draw_textured_floor_shape(shape: PackedVector2Array, texture: Texture2D, tint: Color) -> void:
 	var triangles := Geometry2D.triangulate_polygon(shape)
 	for index in range(0, triangles.size(), 3):
 		var triangle := PackedVector2Array()
@@ -1839,23 +2531,44 @@ func _draw_textured_floor_shape(shape: PackedVector2Array, texture: Texture2D) -
 		for vertex_index in range(3):
 			var world_point: Vector2 = shape[triangles[index + vertex_index]]
 			triangle.append(_world_to_screen(world_point))
-			uvs.append(world_point / 256.0)
-			colors.append(Color.WHITE)
+			uvs.append(_floor_material_uv(world_point, texture))
+			colors.append(tint)
 		draw_polygon(triangle, colors, uvs, texture)
 
-func _draw_textured_cave_floor(cave: Dictionary) -> void:
+func _draw_textured_cave_floor(cave: Dictionary, tint: Color) -> void:
 	var contour: PackedVector2Array = cave.contour
 	var screen_points := PackedVector2Array()
 	var uvs := PackedVector2Array()
 	var colors := PackedColorArray()
 	for point in contour:
 		screen_points.append(_world_to_screen(cave.position + point))
-		uvs.append((cave.position + point) / 256.0)
-		colors.append(Color.WHITE)
+		uvs.append(_floor_material_uv(cave.position + point, _get_cave_room_floor_texture(cave.id)))
+		colors.append(tint)
 	var previous_repeat := texture_repeat
 	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
-	draw_polygon(screen_points, colors, uvs, _get_cave_floor_texture(cave.id))
+	draw_polygon(screen_points, colors, uvs, _get_cave_room_floor_texture(cave.id))
 	texture_repeat = previous_repeat
+
+func _get_cave_room_floor_texture(cave_id: int) -> Texture2D:
+	if _biome_at_depth(current_level) == 1:
+		return OXIDIZED_FLOOR_TEXTURE
+	if _biome_at_depth(current_level) == 4:
+		return CRYSTALLINE_FLOOR_TEXTURE
+	var profile := _biome_at_depth(current_level)
+	var index := OTHER_BIOME_PROFILES.find(profile)
+	if index >= 0:
+		if not biome_material_textures.has(profile):
+			var cell := Vector2i(OTHER_BIOME_FLOORS.get_size()) / Vector2i(3, 2)
+			var region := Rect2i(Vector2i(index % 3, floori(float(index) / 3.0)) * cell, cell)
+			# Repeat the isolated material, never the whole multi-biome atlas.
+			biome_material_textures[profile] = ImageTexture.create_from_image(OTHER_BIOME_FLOORS.get_image().get_region(region))
+		return biome_material_textures[profile]
+	return _get_cave_floor_texture(cave_id)
+
+func _floor_material_uv(point: Vector2, texture: Texture2D) -> Vector2:
+	# UVs are normalized: one complete material tile covers a fixed world area.
+	var period := OXIDIZED_FLOOR_WORLD_PERIOD if texture in [OXIDIZED_FLOOR_TEXTURE, CRYSTALLINE_FLOOR_TEXTURE] or texture in biome_material_textures.values() else 256.0
+	return point / period
 
 func _get_cave_floor_texture(cave_id: int) -> Texture2D:
 	if cave_floor_textures.has(cave_id):
@@ -1870,7 +2583,7 @@ func _get_cave_floor_texture(cave_id: int) -> Texture2D:
 	detail.seed = cave_seed ^ 0x5f3759df
 	detail.frequency = 0.12
 	var image := Image.create(256, 256, false, Image.FORMAT_RGBA8)
-	var palette: Array = BIOME_ROCK[Generator.biome_at_depth(current_level)]
+	var palette: Array = BIOME_ROCK[_biome_at_depth(current_level)]
 	var dark_rock := Color(palette[0])
 	var warm_rock := Color(palette[1])
 	match _room_environment(cave_id):
@@ -1893,100 +2606,381 @@ func _get_cave_floor_texture(cave_id: int) -> Texture2D:
 	cave_floor_textures[cave_id] = texture
 	return texture
 
-func _draw_procedural_rock_details(cave: Dictionary) -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = int(posmod(seed_value * 92821 + int(cave.id) * 68917 + 314159, 0x7fffffff))
-	var contour: PackedVector2Array = cave.contour
-	var details_created := 0
-	var attempts := 0
-	while details_created < 34 and attempts < 136:
-		attempts += 1
-		var angle := rng.randf_range(0.0, TAU)
-		var distance := sqrt(rng.randf()) * float(cave.radius) * 0.82
-		var center: Vector2 = cave.position + Vector2(cos(angle), sin(angle)) * distance
-		if not Geometry2D.is_point_in_polygon(center - cave.position, contour):
-			continue
-		var radius_x := rng.randf_range(2.8, 8.0)
-		var radius_y := radius_x * rng.randf_range(0.48, 0.78)
-		if _distance_to_cave_boundary(center, cave) < radius_x * 1.5:
-			continue
-		var rotation := rng.randf_range(0.0, TAU)
-		var sides := rng.randi_range(7, 10)
-		var rock := PackedVector2Array()
-		var rock_is_inside := true
-		var rock_is_revealed := _is_revealed(center)
-		for side in range(sides):
-			var vertex_angle := TAU * float(side) / float(sides) + rotation
-			var roughness := rng.randf_range(0.84, 1.12)
-			var point := center + Vector2(cos(vertex_angle) * radius_x * roughness, sin(vertex_angle) * radius_y * roughness)
-			if not Geometry2D.is_point_in_polygon(point - cave.position, contour):
-				rock_is_inside = false
-			if not _is_revealed(point):
-				rock_is_revealed = false
-			rock.append(_world_to_screen(point))
-		if not rock_is_inside:
-			continue
-		var color_index := rng.randi_range(0, 3)
-		details_created += 1
-		# Keep the procedural layout independent of discovery: fog only controls
-		# visibility, never which rocks get generated or where later rocks land.
-		if not explored_caves.has(cave.id) and not rock_is_revealed:
-			continue
-		var palette: Array = BIOME_ROCK[Generator.biome_at_depth(current_level)]
-		var rock_color := Color(palette[0]).lerp(Color(palette[1]), 0.46 + color_index * 0.09)
-		var shadow := PackedVector2Array()
-		for point in rock:
-			shadow.append(point + Vector2(0.0, maxf(1.0, zoom_level * 0.12)))
-		draw_colored_polygon(shadow, Color("241e22", 0.42))
-		draw_colored_polygon(rock, rock_color)
-		draw_line(rock[0], rock[1], Color("8a6652", 0.24), maxf(0.7, zoom_level * 0.1), true)
+func _ensure_solid_room_rocks() -> void:
+	if surface_mode or world.is_empty() or int(world.get("rock_spacing_version", 0)) >= 2:
+		if not surface_mode and not world.is_empty():
+			_ensure_rock_ground_footprints()
+			_ensure_material_clearance()
+			_ensure_biome_base_collision()
+			preload("res://scripts/cave_ambience.gd").ensure(self)
+			defence_system.ensure(self)
+		return
+	var rocks: Array[Dictionary] = []
+	var mask: PackedByteArray = world.walkable_mask.duplicate()
+	var grid: Vector2i = world.grid_size
+	var cell_size: float = world.cell_size
+	# Old records identify cells that were open before their rock was added.
+	for old_rock in world.get("solid_room_rocks_v1", []):
+		var old_cell := Vector2i((old_rock.position / cell_size).floor())
+		for restored_cell in old_rock.get("blocked_cells", [old_cell]):
+			mask[restored_cell.y * grid.x + restored_cell.x] = 1
+	for cave in world.caves:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash([int(world.seed), "solid_room_rocks_spaced_v2", cave.id])
+		var bounds := Rect2(cave.contour[0], Vector2.ZERO)
+		for corner in cave.contour:
+			bounds = bounds.expand(corner)
+		var count := 0
+		for attempt in range(192):
+			if count >= clampi(roundi(float(cave.radius) / 24.0), 2, 6):
+				break
+			var raw: Vector2 = cave.position + Vector2(rng.randf_range(bounds.position.x, bounds.end.x), rng.randf_range(bounds.position.y, bounds.end.y))
+			var cell := Vector2i((raw / cell_size).floor())
+			var point := (Vector2(cell) + Vector2.ONE * 0.5) * cell_size
+			var variant := rng.randi_range(0, 8)
+			if cell.x < 2 or cell.y < 2 or cell.x >= grid.x - 2 or cell.y >= grid.y - 2:
+				continue
+			if not Geometry2D.is_point_in_polygon(point - cave.position, cave.contour) or _distance_to_cave_boundary(point, cave) < 16.0:
+				continue
+			if point.distance_to(cave.position) < maxf(26.0, float(cave.radius) * 0.32) or point.distance_to(unit_position) < 20.0 or _decoration_near_fixture(point, cave):
+				continue
+			var index := cell.y * grid.x + cell.x
+			# Only remove a cell surrounded by an open ring: every route through
+			# this cell has a replacement around it, preserving connectivity.
+			var ring_clear := true
+			for oy in range(-1, 2):
+				for ox in range(-1, 2):
+					if mask[(cell.y + oy) * grid.x + cell.x + ox] == 0:
+						ring_clear = false
+			if not ring_clear:
+				continue
+			var spaced := true
+			for obstacle in world.obstacles:
+				if point.distance_to(obstacle.position) < float(obstacle.radius) + 18.0:
+					spaced = false
+			for rock in rocks:
+				if point.distance_to(rock.position) < maxf(32.0, float(cave.radius) * 0.48):
+					spaced = false
+			if not spaced:
+				continue
+			# Do not introduce a blocker beneath an active saved route.
+			var route_start := unit_position
+			for route_point in move_path:
+				if Geometry2D.get_closest_point_to_segment(point, route_start, route_point).distance_to(point) < 18.0:
+					spaced = false
+				route_start = route_point
+			if not spaced:
+				continue
+			mask[index] = 0
+			rocks.append({"position": point, "cave_id": cave.id, "variant": variant, "radius": cell_size * 0.5})
+			count += 1
+	world.walkable_mask = mask
+	world["solid_room_rocks_v1"] = rocks
+	world["rock_spacing_version"] = 2
+	world.erase("rock_ground_footprints_v1")
+	_ensure_rock_ground_footprints()
+	_ensure_material_clearance()
+	_ensure_biome_base_collision()
+	preload("res://scripts/cave_ambience.gd").ensure(self)
+	defence_system.ensure(self)
 
-func _draw_isometric_walls(cave: Dictionary) -> void:
+func _base_mask_reaches_exits(mask: PackedByteArray, cave: Dictionary) -> bool:
+	var grid: Vector2i = world.grid_size
+	var points: Array[Vector2] = [_level_access_position(cave.id)]
+	for corridor in world.corridors:
+		if corridor.a == cave.id: points.append(corridor.exit_a)
+		if corridor.b == cave.id: points.append(corridor.exit_b)
+	var goals: Dictionary = {}
+	var source := -1
+	for point in points:
+		var cell := Vector2i((point / world.cell_size).floor())
+		var found := -1
+		for radius in range(3):
+			for y in range(maxi(0,cell.y-radius), mini(grid.y,cell.y+radius+1)):
+				for x in range(maxi(0,cell.x-radius),mini(grid.x,cell.x+radius+1)):
+					if mask[y*grid.x+x] != 0: found = y*grid.x+x; break
+				if found >= 0: break
+			if found >= 0: break
+		if found < 0: return false
+		goals[found] = true
+		if source < 0: source = found
+	var queue: Array[int] = [source]
+	var seen: Dictionary = {source:true}
+	var cursor := 0
+	while cursor < queue.size():
+		var index: int = queue[cursor]
+		cursor += 1
+		goals.erase(index)
+		if goals.is_empty(): return true
+		var cell := Vector2i(index % grid.x, int(index / grid.x))
+		for direction in [Vector2i.LEFT,Vector2i.RIGHT,Vector2i.UP,Vector2i.DOWN]:
+			var next: Vector2i = cell + direction
+			if next.x < 0 or next.y < 0 or next.x >= grid.x or next.y >= grid.y: continue
+			var next_index := next.y*grid.x+next.x
+			if mask[next_index] != 0 and not seen.has(next_index):
+				seen[next_index] = true
+				queue.append(next_index)
+	return false
+
+func _ensure_biome_base_collision() -> void:
+	if world.get("base_solid_v1",false) or not _depth_has_workshop(current_level): return
+	var cave: Dictionary = world.caves[world.entry]
+	var original := _biome_base_footprint(cave)
+	if original.size() != 4: return
+	# A legacy save may have the explorer inside the formerly passable module.
+	# Let it leave before enabling the collider; never teleport it during input.
+	if Geometry2D.is_point_in_polygon(unit_position, original): return
+	var center := Vector2.ZERO
+	for point in original: center += point
+	center /= 4.0
+	for factor in [1.0,0.85,0.7,0.55,0.4,0.25]:
+		var footprint := PackedVector2Array()
+		for point in original: footprint.append(center + (point-center)*factor)
+		var expanded := Geometry2D.offset_polygon(footprint,3.0)
+		var mask: PackedByteArray = world.walkable_mask.duplicate()
+		var blocked: Array[Vector2i] = []
+		var bounds := Rect2(footprint[0],Vector2.ZERO)
+		for point in footprint: bounds = bounds.expand(point)
+		bounds = bounds.grow(world.cell_size)
+		for y in range(maxi(0,floori(bounds.position.y/world.cell_size)),mini(world.grid_size.y,ceili(bounds.end.y/world.cell_size))):
+			for x in range(maxi(0,floori(bounds.position.x/world.cell_size)),mini(world.grid_size.x,ceili(bounds.end.x/world.cell_size))):
+				var point := (Vector2(x,y)+Vector2.ONE*0.5)*float(world.cell_size)
+				for polygon in expanded:
+					if Geometry2D.is_point_in_polygon(point,polygon):
+						mask[y*world.grid_size.x+x] = 0
+						blocked.append(Vector2i(x,y))
+		if blocked.is_empty() or not _base_mask_reaches_exits(mask,cave): continue
+		world.walkable_mask = mask
+		world["base_solid_footprint_v1"] = footprint
+		world["base_solid_cells_v1"] = blocked
+		world["base_solid_v1"] = true
+		fauna_safe_paths.clear()
+		return
+
+func _material_position_is_clear(point: Vector2, cave_id: int) -> bool:
+	var cave: Dictionary = world.caves[cave_id]
+	if not _point_inside_cave_id(point, cave_id) or _distance_to_cave_boundary(point, cave) < 18.0:
+		return false
+	if not _segment_is_walkable(point, point, true): return false
+	for obstacle in world.obstacles:
+		if point.distance_to(obstacle.position) < float(obstacle.radius) + 18.0: return false
+	for rock in world.get("solid_room_rocks_v1", []):
+		if point.distance_to(rock.position) < float(rock.get("visual_radius", 10.0)) + 18.0: return false
+	for sites in [flora_sites, fauna_sites]:
+		if sites.has(cave_id) and point.distance_to(sites[cave_id]) < 24.0: return false
+	return true
+
+func _ensure_material_clearance() -> void:
+	if world.get("material_clearance_v1", false) or mining_cave >= 0: return
+	for cave_id in material_sites:
+		if collected_materials.has(cave_id): continue
+		var origin: Vector2 = material_sites[cave_id]
+		if _material_position_is_clear(origin, cave_id): continue
+		var found := false
+		for ring in range(1, 9):
+			for i in range(16):
+				var point := origin + Vector2.from_angle(TAU * float(i) / 16.0) * float(ring * 8)
+				if not explored_caves.has(cave_id) and _is_revealed(origin) and not _is_revealed(point): continue
+				if _material_position_is_clear(point, cave_id):
+					material_sites[cave_id] = point
+					found = true
+					break
+			if found: break
+	world["material_clearance_v1"] = true
+	fauna_safe_paths.clear()
+
+func _ensure_rock_ground_footprints() -> void:
+	if world.get("rock_ground_footprints_v1", false):
+		return
+	var mask: PackedByteArray = world.walkable_mask.duplicate()
+	var grid: Vector2i = world.grid_size
+	var cell_size: float = world.cell_size
+	for rock in world.get("solid_room_rocks_v1", []):
+		var cell := Vector2i((rock.position / cell_size).floor())
+		var safe := cell.x >= 2 and cell.x < grid.x - 2 and cell.y >= 1 and cell.y < grid.y - 1
+		# A clear ring guarantees a detour around the wider rock footprint.
+		for oy in range(-1, 2):
+			for ox in range(-2, 3):
+				if not safe: break
+				if ox == 0 and oy == 0: continue
+				if mask[(cell.y + oy) * grid.x + cell.x + ox] == 0: safe = false
+		for offset in [-1, 1]:
+			var point: Vector2 = rock.position + Vector2(offset * cell_size, 0)
+			if point.distance_to(unit_position) < cell_size * 1.5: safe = false
+			for route_point in move_path:
+				if point.distance_to(route_point) < cell_size: safe = false
+		rock["visual_radius"] = float(rock.radius) * (2.0 if safe else 1.0)
+		rock["blocked_cells"] = [cell]
+		if safe:
+			for offset in [-1, 1]:
+				var blocked := cell + Vector2i(offset, 0)
+				mask[blocked.y * grid.x + blocked.x] = 0
+				rock.blocked_cells.append(blocked)
+	world.walkable_mask = mask
+	world["rock_ground_footprints_v1"] = true
+
+func _draw_procedural_rock_details(cave: Dictionary) -> void:
+	for rock in world.get("solid_room_rocks_v1", []):
+		if rock.cave_id != cave.id:
+			continue
+		var visible := true
+		for offset in [Vector2.ZERO, Vector2(-7, 0), Vector2(7, 0), Vector2(0, -7), Vector2(0, 7)]:
+			if not explored_caves.has(cave.id) and not _is_revealed(rock.position + offset):
+				visible = false
+		if visible:
+			_draw_biome_rock_sprite(rock.position, float(rock.get("visual_radius", float(rock.radius) * 2.0)), int(rock.variant))
+
+func _draw_biome_rock_sprite(position: Vector2, radius: float, variant: int) -> void:
+	var biome := _biome_at_depth(current_level)
+	var palette: Array = BIOME_ROCK[biome]
+	var native := variant == 0 or (biome != 1 and variant % 3 != 1)
+	var texture: Texture2D = BIOME_ROCK_SPRITES if native else ROCK_VARIATIONS
+	var index: int = [1, 4, 7, 10, 13, 16, 19, 20].find(biome) if native else mini(variant, 7) - 1
+	var cell_size := Vector2(texture.get_size()) / Vector2(4, 2)
+	var source := Rect2(Vector2(index % 4, floori(float(index) / 4.0)) * cell_size, cell_size)
+	var size := Vector2(radius * 2.0, radius * 2.0 * cell_size.y / cell_size.x) * zoom_level
+	var tint := Color.WHITE if native else Color(palette[2]).lerp(Color.WHITE, 0.15)
+	var contact := 0.78 if native else 0.89
+	draw_texture_rect_region(texture, Rect2((_world_to_screen(position) - size * Vector2(0.5, contact)).round(), size), source, tint, false, true)
+
+func _decoration_near_fixture(point: Vector2, cave: Dictionary) -> bool:
+	if _has_level_elevator(cave.id) and point.distance_to(_level_access_position(cave.id)) < 22.0:
+		return true
+	if _is_biome_workshop(cave.id):
+		var footprint := _biome_base_footprint(cave)
+		if footprint.size() == 4 and Geometry2D.is_point_in_polygon(point, footprint):
+			return true
+	for corridor in world.corridors:
+		if corridor.a == cave.id and point.distance_to(corridor.exit_a) < 14.0:
+			return true
+		if corridor.b == cave.id and point.distance_to(corridor.exit_b) < 14.0:
+			return true
+	for sites in [flora_sites, fauna_sites, material_sites]:
+		if sites.has(cave.id) and point.distance_to(sites[cave.id]) < 10.0:
+			return true
+	return false
+
+func _room_exit_uses_full_gallery(corridor_id: int) -> bool:
+	return completed_gallery_traces.has(corridor_id) or corridor_id == render_active_passage_id
+
+func _room_wall_openings(cave: Dictionary, exits: Array[Dictionary]) -> Array[PackedVector2Array]:
+	var openings: Array[PackedVector2Array] = []
+	for exit_info in exits:
+		var corridor := _corridor_by_id(exit_info.corridor_id)
+		if corridor.is_empty():
+			continue
+		# Cut exactly the strip that is rendered, including its taper and bends.
+		var route: PackedVector2Array = corridor.points if _room_exit_uses_full_gallery(corridor.id) else _isometric_exit_stub(exit_info, corridor, cave)
+		if _room_exit_uses_full_gallery(corridor.id):
+			# A butt cap exactly on the room boundary is numerically ambiguous for
+			# polygon clipping. Extend the cut into both rooms, as the stubs do.
+			route = route.duplicate()
+			if route.size() >= 2:
+				route.insert(0, Vector2(corridor.exit_a) - Vector2(corridor.direction_a).normalized() * 10.0)
+				route.append(Vector2(corridor.exit_b) - Vector2(corridor.direction_b).normalized() * 10.0)
+		var edges := _isometric_corridor_edges(route, float(corridor.width) * 0.65)
+		if edges.is_empty():
+			continue
+		var polygon: PackedVector2Array = edges.left.duplicate()
+		var opposite: PackedVector2Array = edges.right.duplicate()
+		opposite.reverse()
+		polygon.append_array(opposite)
+		openings.append(polygon)
+	return openings
+
+func _build_room_wall_spans(cave: Dictionary, openings: Array[PackedVector2Array], depth_step: float = 8.0) -> Array:
+	var spans: Array = []
 	var contour: PackedVector2Array = cave.contour
-	var exits := _visible_exits_for_cave(cave.id)
-	var screen_points := PackedVector2Array()
-	for point in contour:
-		screen_points.append(_world_to_screen(cave.position + point))
-	var center_y := 0.0
-	for point in screen_points:
-		center_y += point.y
-	center_y /= float(screen_points.size())
-	var wall_height := 8.0 * _isometric_object_scale() + zoom_level * 1.5
+	var signed_area := 0.0
+	for i in range(contour.size()):
+		signed_area += contour[i].cross(contour[(i + 1) % contour.size()])
 	for i in range(contour.size()):
 		var a: Vector2 = cave.position + contour[i]
 		var b: Vector2 = cave.position + contour[(i + 1) % contour.size()]
-		var edge := b - a
-		var edge_length := edge.length()
-		if edge_length <= 0.001:
-			continue
-		var cuts: Array[Vector2] = []
-		for exit_info in exits:
-			var closest := Geometry2D.get_closest_point_to_segment(exit_info.position, a, b)
-			if closest.distance_to(exit_info.position) > float(exit_info.width) * 0.5 + 4.0:
-				continue
-			var center_t := clampf((closest - a).dot(edge) / edge.length_squared(), 0.0, 1.0)
-			var half_gap_t := (float(exit_info.width) * 0.5 + 5.0) / edge_length
-			cuts.append(Vector2(maxf(0.0, center_t - half_gap_t), minf(1.0, center_t + half_gap_t)))
-		cuts.sort_custom(func(left: Vector2, right: Vector2) -> bool: return left.x < right.x)
-		var visible_ranges: Array[Vector2] = []
-		var cursor := 0.0
-		for cut in cuts:
-			if cut.x > cursor:
-				visible_ranges.append(Vector2(cursor, cut.x))
-			cursor = maxf(cursor, cut.y)
-		if cursor < 1.0:
-			visible_ranges.append(Vector2(cursor, 1.0))
-		for edge_range in visible_ranges:
-			var start := _world_to_screen(a.lerp(b, edge_range.x))
-			var finish := _world_to_screen(a.lerp(b, edge_range.y))
-			var edge_screen_y := (start.y + finish.y) * 0.5
-			var wall_direction := 1.0 if edge_screen_y >= center_y else -1.0
-			var wall_offset := Vector2(0, wall_height * wall_direction)
-			draw_colored_polygon(PackedVector2Array([start, finish, finish + wall_offset, start + wall_offset]), Color("2e2224") if finish.x >= start.x else Color("37272a"))
-			draw_line(start, start + wall_offset, Color("765044"), 0.9, true)
-			draw_line(finish, finish + wall_offset, Color("21191d"), 0.9, true)
+		var pieces: Array[PackedVector2Array] = [PackedVector2Array([a, b])]
+		for opening in openings:
+			var remaining: Array[PackedVector2Array] = []
+			for piece in pieces:
+				remaining.append_array(Geometry2D.clip_polyline_with_polygon(piece, opening))
+			pieces = remaining
+		for piece in pieces:
+			for j in range(piece.size() - 1):
+				if piece[j].distance_squared_to(piece[j + 1]) < 0.0001:
+					continue
+				# The local outward normal determines the visible face, including
+				# concave corners. Position relative to the room centre does not.
+				var tangent := (b - a).normalized()
+				var outward_y := -tangent.x * (1.0 if signed_area >= 0.0 else -1.0)
+				var direction := minf(-0.12, outward_y) if outward_y < -0.01 else 1.0
+				# Short spans keep a long diagonal wall from hiding an interior lamp
+				# merely because the far end has a greater painter depth.
+				var count := maxi(1, ceili(piece[j].distance_to(piece[j + 1]) / depth_step))
+				for part in range(count):
+					spans.append([piece[j].lerp(piece[j + 1], float(part) / count), piece[j].lerp(piece[j + 1], float(part + 1) / count), direction, 0.0])
+	return spans
 
-func _draw_isometric_contour(cave: Dictionary) -> void:
+func _room_wall_spans_for_cave(cave: Dictionary) -> Array:
+	var exits := _visible_exits_for_cave(cave.id)
+	# A fully drawn passage must also open its destination mouth, even if its
+	# per-room exit marker has not yet been registered on arrival.
+	for corridor in world.corridors:
+		if not _room_exit_uses_full_gallery(corridor.id) or (corridor.a != cave.id and corridor.b != cave.id):
+			continue
+		var found := false
+		for exit_info in exits:
+			if exit_info.corridor_id == corridor.id:
+				found = true
+		if not found:
+			exits.append({"corridor_id": corridor.id, "position": corridor.exit_a if corridor.a == cave.id else corridor.exit_b,
+				"direction": corridor.direction_a if corridor.a == cave.id else corridor.direction_b, "width": corridor.width})
+	var full_gallery_flags: Array[bool] = []
+	for exit_info in exits:
+		full_gallery_flags.append(_room_exit_uses_full_gallery(exit_info.corridor_id))
+	var depth_step := 32.0 if zoom_level < 1.5 else 8.0
+	var key := hash([cave.id, exits, full_gallery_flags, depth_step])
+	if not render_room_wall_spans.has(key):
+		render_room_wall_spans[key] = _build_room_wall_spans(cave, _room_wall_openings(cave, exits), depth_step)
+	return render_room_wall_spans[key]
+
+func _draw_isometric_walls(cave: Dictionary) -> void:
+	_draw_wall_group(_room_wall_spans_for_cave(cave), ["room", cave.id, _room_wall_spans_for_cave(cave)], cave.position)
+
+func _draw_wall_group(spans: Array, identity: Array, origin: Vector2, fade: bool = false) -> void:
+	var key := hash([identity, _biome_at_depth(current_level)])
+	if not render_wall_groups.has(key):
+		if render_wall_groups.size() >= 4096:
+			render_wall_groups.clear()
+		var palette: Array = BIOME_ROCK[_biome_at_depth(current_level)]
+		render_wall_groups[key] = CaveWallMesh.build_group(spans, origin, palette, int(world.seed), fade)
+	var meshes: Array = render_wall_groups[key]
+	var transform := _render_mesh_transform(origin)
+	for i in range(3):
+		var mesh: ArrayMesh = meshes[i]
+		if mesh.get_surface_count() > 0:
+			draw_mesh(mesh, CAVE_WALL_TEXTURE if i == 0 else (CAVE_FORMATIONS if i == 2 else null), transform)
+
+func _draw_cave_wall_face(start: Vector2, finish: Vector2, direction: float, opacity: float = 1.0) -> void:
+	if opacity <= 0.01:
+		return
+	var world_start := _screen_to_world(start).snapped(Vector2(0.001, 0.001))
+	var world_finish := _screen_to_world(finish).snapped(Vector2(0.001, 0.001))
+	if world_start.distance_squared_to(world_finish) < 0.01 or not _render_segment_on_screen(world_start, world_finish, 24.0 * zoom_level):
+		return
+	var key := hash([world_start, world_finish, direction])
+	if not render_wall_meshes.has(key):
+		if render_wall_meshes.size() >= 4096:
+			render_wall_meshes.clear()
+		var palette: Array = BIOME_ROCK[_biome_at_depth(current_level)]
+		render_wall_meshes[key] = CaveWallMesh.build(world_start, world_finish, direction, palette, int(world.seed))
+	var meshes: Array = render_wall_meshes[key]
+	var transform := Transform2D(Vector2(zoom_level, 0), Vector2(0, zoom_level), _world_to_screen(world_start))
+	var tint := Color(1, 1, 1, opacity)
+	for i in range(3):
+		var mesh: ArrayMesh = meshes[i]
+		if mesh.get_surface_count() > 0:
+			draw_mesh(mesh, CAVE_WALL_TEXTURE if i == 0 else (CAVE_FORMATIONS if i == 2 else null), transform, tint)
+
+func _draw_isometric_contour(cave: Dictionary, ink: Color) -> void:
 	var outline := PackedVector2Array()
 	for point in cave.contour:
 		outline.append(cave.position + point)
@@ -2015,7 +3009,7 @@ func _draw_isometric_contour(cave: Dictionary) -> void:
 		for point in edge:
 			screen.append(_world_to_screen(point))
 		if screen.size() >= 2:
-			draw_polyline(screen, Color(BIOME_ROCK[Generator.biome_at_depth(current_level)][2]), maxf(1.2, zoom_level * 0.3), true)
+			draw_polyline(screen, ink, maxf(1.2, zoom_level * 0.3), true)
 
 func _draw_isometric_corridors(cave: Dictionary, passage_id: int) -> void:
 	# Draw each gallery as a coplanar textured floor strip. The same world-space
@@ -2028,6 +3022,10 @@ func _draw_isometric_corridors(cave: Dictionary, passage_id: int) -> void:
 				break
 		if corridor.is_empty() or corridor.id == passage_id or _gallery_has_lamps(corridor):
 			continue
+		var mouth_already_drawn := false
+		for span in _drawn_gallery_spans(corridor):
+			if _distance_to_polyline(exit_info.position,span)<1.0: mouth_already_drawn=true; break
+		if mouth_already_drawn: continue
 		var centerline := _isometric_exit_stub(exit_info, corridor, cave)
 		if centerline.size() >= 2:
 			var edges := _isometric_corridor_edges(centerline, float(corridor.width) * 0.65)
@@ -2046,20 +3044,11 @@ func _draw_isometric_corridors(cave: Dictionary, passage_id: int) -> void:
 					for outside in Geometry2D.clip_polyline_with_polygon(segment, room_polygon):
 						if outside.size() >= 2:
 							draw_line(_world_to_screen(outside[0]), _world_to_screen(outside[1]), Color("805043", 1.0 - progress), maxf(1.2, zoom_level * 0.3), true)
-			var out_of_range := not _is_gallery_exit_accessible(corridor, cave.id)
-			if out_of_range or not _gallery_was_crossed(corridor):
-				var marker := _world_to_screen(exit_info.position + exit_info.direction * 8.0)
-				draw_set_transform(marker, 0.0, Vector2.ONE * _isometric_object_scale())
-				if out_of_range:
-					_draw_blocked_exit_badge(self, Vector2.ZERO, 1.0)
-				else:
-					draw_circle(Vector2.ZERO, 10.0, PANEL, true, -1.0, true)
-					draw_circle(Vector2.ZERO, 10.0, ACCESSIBLE_GALLERY_COLOR, false, 1.4, true)
-					draw_string(ThemeDB.fallback_font, Vector2(-10, 5), "?", HORIZONTAL_ALIGNMENT_CENTER, 20, 14, ACCESSIBLE_GALLERY_COLOR)
-				draw_set_transform(Vector2.ZERO)
 
 
 func _draw_isometric_passage(gallery: Dictionary, points: PackedVector2Array) -> void:
+	if not _render_path_on_screen(points, (float(gallery.width) + 24.0) * zoom_level):
+		return
 	var edges := _isometric_corridor_edges(points, float(gallery.width) * 0.65)
 	if edges.is_empty():
 		return
@@ -2091,30 +3080,68 @@ func _point_in_lit_gallery(point: Vector2) -> bool:
 	return false
 
 func _draw_gallery_lamps(edges: Dictionary) -> void:
-	if edges.is_empty():
+	if edges.is_empty() or not _render_path_on_screen(edges.left, 10.0 * zoom_level):
 		return
 	var left: PackedVector2Array = edges.left
 	var right: PackedVector2Array = edges.right
-	var scale := _isometric_object_scale()
-	var distance_to_lamp := 14.0
-	for index in range(left.size() - 1):
-		var start := (left[index] + right[index]) * 0.5
-		var finish := (left[index + 1] + right[index + 1]) * 0.5
-		var length := start.distance_to(finish)
-		if length <= 0.001:
-			continue
-		while distance_to_lamp < length:
-			var progress := distance_to_lamp / length
-			if _cave_at_position(start.lerp(finish, progress)) < 0:
-				for edge in [left, right]:
-					var mount := _world_to_screen(edge[index].lerp(edge[index + 1], progress))
-					var light := mount + Vector2(0, -6) * scale
-					draw_line(mount, light, Color("5b4739"), 3.0 * scale, true)
-					draw_circle(light, 12.0 * scale, Color(1.0, 0.74, 0.37, 0.12), true, -1.0, true)
-					draw_circle(light, 4.0 * scale, Color("5b4739"), true, -1.0, true)
-					draw_circle(light, 2.8 * scale, Color("ffd998"), true, -1.0, true)
-			distance_to_lamp += 35.0
-		distance_to_lamp -= length
+	var glow_radius := 12.0 * _isometric_object_scale() / zoom_level
+	var key := hash([left, right, glow_radius])
+	if not render_gallery_lights.has(key):
+		var glows := CaveWallMesh._builder()
+		var lamps := CaveWallMesh._builder()
+		var origin := left[0]
+		var distance_to_lamp := 14.0
+		var texture_size := Vector2(GALLERY_FLOOR_LIGHT.get_size())
+		var source := Rect2(360, 785, 535, 340)
+		var uvs := PackedVector2Array([source.position / texture_size,
+			Vector2(source.end.x, source.position.y) / texture_size, source.end / texture_size,
+			Vector2(source.position.x, source.end.y) / texture_size])
+		for index in range(left.size() - 1):
+			var start := (left[index] + right[index]) * 0.5
+			var finish := (left[index + 1] + right[index + 1]) * 0.5
+			var length := start.distance_to(finish)
+			if length <= 0.001:
+				continue
+			while distance_to_lamp < length:
+				var progress := distance_to_lamp / length
+				var axis := start.lerp(finish, progress)
+				if _cave_at_position(axis) < 0:
+					var position: Vector2 = axis
+					var center := _render_project_delta(position - origin)
+					var ring := _surface_ellipse_points(center, glow_radius, glow_radius, 16)
+					for j in range(ring.size()):
+						CaveWallMesh._triangle(glows, PackedVector2Array([center, ring[j], ring[(j + 1) % ring.size()]]), PackedColorArray([Color(1.0, 0.74, 0.37, 0.12)]))
+					var along := (finish - start).normalized()
+					var across := along.orthogonal()
+					var points := PackedVector2Array()
+					for corner in [Vector2(-3, -2.7), Vector2(3, -2.7), Vector2(3, 2.7), Vector2(-3, 2.7)]:
+						points.append(_render_project_delta(position + along * corner.x + across * corner.y - origin))
+					CaveWallMesh._quad(lamps, points, PackedColorArray([Color.WHITE]), uvs)
+				distance_to_lamp += 35.0
+			distance_to_lamp -= length
+		if render_gallery_lights.size() >= 256:
+			render_gallery_lights.clear()
+		render_gallery_lights[key] = [CaveWallMesh._mesh(glows), CaveWallMesh._mesh(lamps)]
+	var meshes: Array = render_gallery_lights[key]
+	var transform := _render_mesh_transform(left[0])
+	for i in range(2):
+		var mesh: ArrayMesh = meshes[i]
+		if mesh.get_surface_count() > 0:
+			draw_mesh(mesh, null if i == 0 else GALLERY_FLOOR_LIGHT, transform)
+
+func _draw_gallery_floor_light(position: Vector2, along: Vector2) -> void:
+	# Rotate on the logical ground plane BEFORE projection, not in screen space.
+	# The source artwork already has a compressed isometric footprint.
+	var across := along.orthogonal()
+	var points := PackedVector2Array()
+	for corner in [Vector2(-3, -2.7), Vector2(3, -2.7), Vector2(3, 2.7), Vector2(-3, 2.7)]:
+		points.append(_world_to_screen(position + along * corner.x + across * corner.y))
+	var texture_size := Vector2(GALLERY_FLOOR_LIGHT.get_size())
+	var source := Rect2(360, 785, 535, 340)
+	var uvs := PackedVector2Array([source.position / texture_size,
+		Vector2(source.end.x, source.position.y) / texture_size, source.end / texture_size,
+		Vector2(source.position.x, source.end.y) / texture_size])
+	draw_polygon(points, PackedColorArray([Color.WHITE]), uvs, GALLERY_FLOOR_LIGHT)
 
 func _gallery_was_crossed(corridor: Dictionary) -> bool:
 	var mouth_a: Vector2 = corridor.exit_a
@@ -2126,27 +3153,34 @@ func _gallery_was_crossed(corridor: Dictionary) -> bool:
 	return false
 
 func _draw_world_textured_corridor(edges: Dictionary, cave_id: int, fade_at_end: bool = true) -> void:
-	var texture := _get_cave_floor_texture(cave_id)
-	var previous_repeat := texture_repeat
-	texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+	var texture := _get_cave_room_floor_texture(cave_id)
 	var left: PackedVector2Array = edges.left
 	var right: PackedVector2Array = edges.right
-	for index in range(left.size() - 1):
-		var alpha_a := 1.0 - smoothstep(0.62, 1.0, float(index) / float(left.size() - 1)) if fade_at_end else 1.0
-		var alpha_b := 1.0 - smoothstep(0.62, 1.0, float(index + 1) / float(left.size() - 1)) if fade_at_end else 1.0
-		var vertices := [left[index], right[index], left[index + 1], right[index + 1]]
-		var alphas := [alpha_a, alpha_a, alpha_b, alpha_b]
-		for triangle_indices in [[0, 1, 2], [2, 1, 3]]:
-			var triangle := PackedVector2Array()
-			var uvs := PackedVector2Array()
-			var colors := PackedColorArray()
-			for vertex_index in triangle_indices:
-				var world_point: Vector2 = vertices[vertex_index]
-				triangle.append(_world_to_screen(world_point))
-				uvs.append(world_point / 256.0)
-				colors.append(Color(1.0, 1.0, 1.0, alphas[vertex_index]))
-			draw_polygon(triangle, colors, uvs, texture)
-	texture_repeat = previous_repeat
+	var key := hash([left, right, cave_id, fade_at_end])
+	if not render_corridor_floors.has(key):
+		var builder := CaveWallMesh._builder()
+		for index in range(left.size() - 1):
+			var alpha_a := 1.0 - smoothstep(0.62, 1.0, float(index) / float(left.size() - 1)) if fade_at_end else 1.0
+			var alpha_b := 1.0 - smoothstep(0.62, 1.0, float(index + 1) / float(left.size() - 1)) if fade_at_end else 1.0
+			var vertices := [left[index], right[index], left[index + 1], right[index + 1]]
+			var alphas := [alpha_a, alpha_a, alpha_b, alpha_b]
+			for triangle_indices in [[0, 1, 2], [2, 1, 3]]:
+				var triangle := PackedVector2Array()
+				var uvs := PackedVector2Array()
+				var colors := PackedColorArray()
+				for vertex_index in triangle_indices:
+					var world_point: Vector2 = vertices[vertex_index]
+					triangle.append(_render_project_delta(world_point - left[0]))
+					uvs.append(_floor_material_uv(world_point, texture))
+					colors.append(Color(1, 1, 1, alphas[vertex_index]))
+				CaveWallMesh._triangle(builder, triangle, colors, uvs)
+		if render_corridor_floors.size() >= 256:
+			render_corridor_floors.clear()
+		render_corridor_floors[key] = CaveWallMesh._mesh(builder)
+	draw_mesh(render_corridor_floors[key], texture, _render_mesh_transform(left[0]),Color(0.76,0.88,0.94) if current_level==1 else Color.WHITE)
+	preload("res://scripts/cave_ambience.gd").draw_gallery_relief(self,edges,fade_at_end)
+	# Room and passage walls must share the same depth/lighting pass and palette.
+	render_visible_gallery_walls.append({"spans": _cached_corridor_wall_spans(edges), "fade": fade_at_end})
 
 func _isometric_exit_stub(exit_info: Dictionary, corridor: Dictionary, cave: Dictionary) -> PackedVector2Array:
 	# Start slightly inside the room so the corridor floor overlaps the cave
@@ -2228,7 +3262,7 @@ func _visible_gallery_at(point: Vector2) -> Dictionary:
 	for corridor in world.corridors:
 		if corridor.a != selected_cave and corridor.b != selected_cave:
 			continue
-		var spans: Array = [corridor.points] if _gallery_has_lamps(corridor) else walked_gallery_spans.get(corridor.id, [])
+		var spans: Array = [corridor.points] if _gallery_has_lamps(corridor) else _drawn_gallery_spans(corridor)
 		for span: PackedVector2Array in spans:
 			var distance := _isometric_gallery_hit_distance(point, span, float(corridor.width) * 0.65)
 			if distance < nearest_distance:
@@ -2280,6 +3314,9 @@ func _isometric_corridor_edges(centerline: PackedVector2Array, width: float) -> 
 	return {"left": left_edge, "right": right_edge}
 
 func _draw_isometric_obstacle(obstacle: Dictionary) -> void:
+	if float(obstacle.radius) >= 12.0:
+		_draw_biome_rock_sprite(obstacle.position, float(obstacle.radius), int(obstacle.id) % 9)
+		return
 	var radius: float = obstacle.radius
 	var base := PackedVector2Array()
 	var top := PackedVector2Array()
@@ -2299,19 +3336,22 @@ func _draw_isometric_obstacle(obstacle: Dictionary) -> void:
 	draw_colored_polygon(top, Color("737b80"))
 	draw_polyline(PackedVector2Array([top[0], top[1], top[2]]), Color("b1b8b0"), 1.2, true)
 
+func _draw_explorer_sprite(feet: Vector2, scale: float, facing: Vector2, walking: bool) -> void:
+	var column := OrganismPixelArt.facing_index(Vector2(facing.x, facing.y * ISO_VERTICAL_RATIO))
+	var frame := int(floor(fauna_time * 7.0)) % 2 if walking and not taking_field_photo else 0
+	var cell := Vector2(EXPLORER_SPRITE.get_size()) / Vector2(4, 2)
+	var source := Rect2(Vector2(column, frame) * cell, cell)
+	var size := Vector2(62, 62 * cell.y / cell.x) * scale
+	var contact := 0.90 if frame == 0 else 0.89
+	draw_texture_rect_region(EXPLORER_SPRITE,
+		Rect2((feet - size * Vector2(0.5, contact)).round(), size), source, Color.WHITE, false, true)
+
 func _draw_isometric_explorer(position: Vector2) -> void:
 	var screen := _world_to_screen(position)
 	var scale := minf(zoom_level * 0.28, 1.6)
-	var ground := PackedVector2Array()
-	for i in range(12):
-		var angle := TAU * float(i) / 12.0
-		ground.append(screen + Vector2(cos(angle) * 13.0, sin(angle) * 5.0) * scale + Vector2(0, zoom_level * 2.0))
-	draw_colored_polygon(ground, Color("100e12", 0.72))
-	draw_colored_polygon(PackedVector2Array([screen + Vector2(-7, 1) * scale, screen + Vector2(-4, 11) * scale, screen + Vector2(4, 11) * scale, screen + Vector2(7, 1) * scale]), Color("263b43"))
-	draw_rect(Rect2(screen + Vector2(-6, -15) * scale, Vector2(12, 16) * scale), Color("9b653d"))
-	draw_rect(Rect2(screen + Vector2(-9, -14) * scale, Vector2(5, 13) * scale), Color("46747a"))
-	draw_circle(screen + Vector2(0, -20) * scale, 6.0 * scale, Color("b2c5ba"))
-	draw_circle(screen + Vector2(1, -20) * scale, 2.2 * scale, CYAN)
+	var ground := _surface_ellipse_points(screen, 11 * scale, 4 * scale, 20)
+	draw_colored_polygon(ground, Color("100e12", 0.65))
+	_draw_explorer_sprite(screen, scale, explorer_facing, moving)
 
 func _build_profiles_dialog() -> void:
 	profiles_dialog = AcceptDialog.new()
@@ -2425,6 +3465,7 @@ func _confirm_delete_profile() -> void:
 
 func _clear_profile_progress() -> void:
 	deepest_reached = 0
+	discovered_biomes.clear()
 	expedition_history.clear()
 	expedition_record.clear()
 	biological_register.clear()
@@ -2608,11 +3649,15 @@ func _capture_saved_game() -> Dictionary:
 	game["depth_trip_target"] = depth_trip_target
 	game["expedition_completed"] = expedition_completed
 	game["deepest_reached"] = deepest_reached
+	game["campaign_biome_order"] = campaign_biome_order.duplicate()
+	game["discovered_biomes"] = discovered_biomes.duplicate()
+	game["defence_state"] = defence_state.duplicate()
 	game["starting_rewards_depth"] = starting_rewards_depth
 	game["expedition_history"] = expedition_history
 	game["expedition_record"] = expedition_record
 	game["biological_register"] = biological_register
 	game["biological_photos"] = biological_photos
+	game["show_beacon_waves"] = show_beacon_waves
 	return game.duplicate(true)
 
 func _serializable_level(state: Dictionary) -> Dictionary:
@@ -2624,12 +3669,17 @@ func _valid_saved_level(state: Dictionary) -> bool:
 	for field in LEVEL_STATE_FIELDS:
 		if field == "cave_floor_textures":
 			continue
+		if field=="fauna_pause" and not state.has(field): continue
 		if not state.has(field) or typeof(state[field]) != typeof(get(field)):
 			return false
 	var saved_world: Dictionary = state.world
 	return saved_world.get("caves") is Array and not saved_world.caves.is_empty() and saved_world.get("corridors") is Array and saved_world.get("grid_size") is Vector2i and saved_world.get("walkable_mask") is PackedByteArray and saved_world.get("terrain_mask") is PackedByteArray and state.revealed_mask.size() == saved_world.terrain_mask.size()
 
 func _valid_saved_game(game: Dictionary) -> bool:
+	if game.has("campaign_biome_order") and (not game.campaign_biome_order is Array or not CampaignRules.valid_order(game.campaign_biome_order)):
+		return false
+	if game.has("discovered_biomes") and not game.discovered_biomes is Dictionary: return false
+	if game.has("defence_state") and not game.defence_state is Dictionary: return false
 	for field in SAVED_GAME_FIELDS:
 		if not game.has(field) or typeof(game[field]) != typeof(get(field)):
 			return false
@@ -2643,6 +3693,13 @@ func _valid_saved_game(game: Dictionary) -> bool:
 	return true
 
 func _restore_saved_game(game: Dictionary) -> void:
+	var saved_order: Array = game.get("campaign_biome_order",CampaignRules.CLASSIC_ORDER)
+	campaign_biome_order = saved_order.duplicate() if CampaignRules.valid_order(saved_order) else CampaignRules.CLASSIC_ORDER.duplicate()
+	discovered_biomes = game.get("discovered_biomes",{}).duplicate()
+	defence_state=ExpeditionDefence.restored(game.get("defence_state",{}))
+	defence_system.reset()
+	show_beacon_waves = bool(game.get("show_beacon_waves", true))
+	beacon_waves_toggle.set_pressed_no_signal(show_beacon_waves)
 	expedition_completed = bool(game.get("expedition_completed", false))
 	depth_trip_target = clampi(int(game.get("depth_trip_target", -1)), -1, CAMPAIGN_DEPTH)
 	for field in SAVED_GAME_FIELDS:
@@ -2658,8 +3715,13 @@ func _restore_saved_game(game: Dictionary) -> void:
 	biological_photos = game.get("biological_photos", {})
 	deepest_reached = clampi(int(game.get("deepest_reached", 0)), 0, CAMPAIGN_DEPTH)
 	deepest_reached = maxi(deepest_reached, current_level)
+	if current_level>0: discovered_biomes[_biome_at_depth(current_level)] = true
 	for depth in inactive_levels:
-		deepest_reached = maxi(deepest_reached, clampi(int(depth), 0, CAMPAIGN_DEPTH))
+		if not inactive_levels[depth].get("visited_caves", {}).is_empty():
+			deepest_reached = maxi(deepest_reached, clampi(int(depth), 0, CAMPAIGN_DEPTH))
+	if not game.has("discovered_biomes"):
+		for start: int in CampaignRules.STARTS:
+			if start<=deepest_reached: discovered_biomes[_biome_at_depth(start)] = true
 	starting_rewards_depth = clampi(int(game.get("starting_rewards_depth", 0)), 0, deepest_reached)
 	if expedition_record.is_empty():
 		var depth := current_level
@@ -2672,6 +3734,7 @@ func _restore_saved_game(game: Dictionary) -> void:
 			_finish_expedition_record("Completada")
 	for state in inactive_levels.values():
 		state["cave_floor_textures"] = {}
+		state["fauna_pause"] = state.get("fauna_pause",{})
 	for field in LEVEL_STATE_FIELDS:
 		set(field, game.level.get(field, {}))
 	if current_level == 3 and descent_access < 0:
@@ -2709,10 +3772,21 @@ func _notification(what: int) -> void:
 		_save_active_profile()
 
 func _build_ui() -> void:
+	game_audio = preload("res://scripts/game_audio.gd").new()
+	add_child(game_audio)
+	var lighting := preload("res://scripts/cave_lighting.gd").new()
+	add_child(lighting)
+	add_child(preload("res://scripts/beacon_overlay.gd").new())
+	add_child(preload("res://scripts/defence_overlay.gd").new())
+	var shared_ui_theme := preload("res://scripts/interface_theme.gd").build()
+	child_entered_tree.connect(func(node: Node) -> void:
+		if node is Window:
+			node.theme = shared_ui_theme
+			node.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_LINEAR)
 	_build_discovery_dialog()
 	death_dialog = AcceptDialog.new()
-	death_dialog.title = "Fi de la partida"
-	death_dialog.ok_button_text = "NOVA PARTIDA"
+	death_dialog.title = "Fi de l’expedició"
+	death_dialog.ok_button_text = "COMENÇA UN MÓN NOU"
 	death_dialog.exclusive = true
 	death_dialog.dialog_autowrap = true
 	add_child(death_dialog)
@@ -2726,13 +3800,18 @@ func _build_ui() -> void:
 	add_child(victory_dialog)
 	death_dialog.canceled.connect(_restart_after_death)
 	ui_root = Control.new()
+	# Text must not inherit the nearest-neighbour filtering used by world sprites.
+	ui_root.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	ui_root.theme = shared_ui_theme
 	ui_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ui_root.mouse_filter = Control.MOUSE_FILTER_PASS
 	add_child(ui_root)
 	var left := _panel(Rect2(0, 8, 280, 350))
+	left.get_child(0).hide()
+	left.draw.connect(func() -> void: _draw_register_panel_frame(left))
 	left.scale = Vector2.ONE * SIDE_PANEL_SCALE
 	ui_root.add_child(left)
-	_add_label(left, "SUBTERRA: MARS", 18, CYAN, Vector2(16, 12), Vector2(248, 26))
+	_add_label(left, "SUBTERRA: MARS", 16, Color("e4f1f1"), Vector2(16, 12), Vector2(174, 26))
 	var profiles_button := _button("PARTIDA", Vector2(190, 12), Vector2(74, 25), true)
 	profiles_button.pressed.connect(_open_profiles)
 	left.add_child(profiles_button)
@@ -2761,6 +3840,9 @@ func _build_ui() -> void:
 	base_return_button.tooltip_text = "Cal tornar a la sala d'entrada de l’estrat -1 per pujar a la superfície."
 	base_return_button.pressed.connect(func() -> void: _confirm_depth_action(current_level - 1, _start_return_to_base))
 	left.add_child(base_return_button)
+	biome_base_return_button = _button("BASE DEL BIOMA", Vector2.ZERO, Vector2(172, 30), true)
+	biome_base_return_button.pressed.connect(func() -> void: _request_depth_trip(_current_biome_base_depth()))
+	left.add_child(biome_base_return_button)
 	descend_navigation_button = _button("", Vector2(144, 130), Vector2(120, 30))
 	descend_navigation_button.hide()
 	descend_navigation_button.pressed.connect(func() -> void: _confirm_depth_action(current_level + 1, _start_descent_navigation))
@@ -2815,7 +3897,7 @@ func _build_ui() -> void:
 	map_options_window.title = "Opcions del mapa"
 	add_child(map_options_window)
 	var map_options_content := Control.new()
-	map_options_content.custom_minimum_size = Vector2(310, 270)
+	map_options_content.custom_minimum_size = Vector2(310, 486)
 	map_options_window.add_child(map_options_content)
 	seed_edit.reparent(map_options_content, false)
 	seed_edit.position = Vector2(16, 20)
@@ -2843,7 +3925,7 @@ func _build_ui() -> void:
 	dev_toggle.toggled.connect(_on_dev_mode_toggled)
 	map_options_content.add_child(dev_toggle)
 	var ring_toggle := CheckButton.new()
-	ring_toggle.text = "Cercles de cobertura"
+	ring_toggle.text = "Cercles fixos de cobertura"
 	ring_toggle.position = Vector2(12, 198)
 	ring_toggle.button_pressed = show_signal_rings
 	ring_toggle.toggled.connect(_on_overlay_toggled.bind("signal_rings"))
@@ -2854,12 +3936,47 @@ func _build_ui() -> void:
 	findings_toggle.button_pressed = show_findings
 	findings_toggle.toggled.connect(_on_overlay_toggled.bind("findings"))
 	map_options_content.add_child(findings_toggle)
+	beacon_waves_toggle = CheckButton.new()
+	beacon_waves_toggle.text = "Ones en moviment"
+	beacon_waves_toggle.tooltip_text = "Mostra l’animació de les ones de la base i les balises. Els cercles fixos tenen el seu propi control."
+	beacon_waves_toggle.position = Vector2(12, 266)
+	beacon_waves_toggle.button_pressed = show_beacon_waves
+	beacon_waves_toggle.toggled.connect(_on_overlay_toggled.bind("beacon_waves"))
+	map_options_content.add_child(beacon_waves_toggle)
+	var sound_toggle := CheckButton.new()
+	sound_toggle.text = "Efectes de so"
+	sound_toggle.position = Vector2(12, 300)
+	sound_toggle.button_pressed = game_audio.enabled
+	sound_toggle.toggled.connect(game_audio.set_enabled)
+	map_options_content.add_child(sound_toggle)
+	var music_toggle := CheckButton.new()
+	music_toggle.text="Música de fons"
+	music_toggle.position=Vector2(12,334)
+	music_toggle.button_pressed=game_audio.music_enabled
+	music_toggle.toggled.connect(game_audio.set_music_enabled)
+	map_options_content.add_child(music_toggle)
+	var music_caption := _add_label(map_options_content,"Volum de música · %d%%" % roundi(game_audio.music_volume*100),12,CYAN,Vector2(16,376),Vector2(260,20))
+	var music_slider := HSlider.new()
+	music_slider.position=Vector2(16,402)
+	music_slider.size=Vector2(266,24)
+	music_slider.min_value=0
+	music_slider.max_value=100
+	music_slider.step=1
+	music_slider.value=game_audio.music_volume*100
+	music_slider.value_changed.connect(func(value: float) -> void:
+		game_audio.set_music_volume(value/100.0)
+		music_caption.text="Volum de música · %d%%" % roundi(value))
+	map_options_content.add_child(music_slider)
+	var recover_button := _button("DESENCALLA L’EXPLORADOR · F8",Vector2(12,440),Vector2(286,30))
+	recover_button.tooltip_text="Cancel·la les ordres i busca un punt lliure proper sense canviar de sala ni recuperar reserves."
+	recover_button.pressed.connect(_recover_stuck_explorer)
+	map_options_content.add_child(recover_button)
 	inspect_room_button = _button("INSPECCIONA", Vector2(16, 94), Vector2(120, 30))
 	inspect_room_button.pressed.connect(_focus_selected_cave)
 	inspect_room_button.tooltip_text = "Obre la sala on és l’explorador en vista isomètrica."
 	fit_map_button = _button("ENQUADRA EL MAPA", Vector2.ZERO, Vector2(172, 30), true)
 	fit_map_button.pressed.connect(_fit_discovered_map)
-	map_legend_panel = _panel(Rect2(0, 0, 280, 391))
+	map_legend_panel = _panel(Rect2(0, 0, 280, 414))
 	ui_root.add_child(map_legend_panel)
 	_add_label(map_legend_panel, "LLEGENDA DEL MAPA", 12, CYAN, Vector2(16, 8), Vector2(248, 20))
 	var legend_content := Control.new()
@@ -2874,35 +3991,33 @@ func _build_ui() -> void:
 	map_options_section.add_child(options_button)
 	var legend_icons := Control.new()
 	legend_icons.position = Vector2(16, 12)
-	legend_icons.size = Vector2(20, 355)
+	legend_icons.size = Vector2(20, 380)
 	legend_icons.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	legend_icons.draw.connect(func() -> void:
-		var explorer := Vector2(9, 9)
-		legend_icons.draw_circle(explorer, 5.0, ORANGE)
-		legend_icons.draw_circle(explorer, 8.0, Color("ffe2ba"), false, 1.4, true)
-		_draw_room_state_badge(Vector2(9, 32), 1.0, true, legend_icons)
-		_draw_room_complete_badge(legend_icons, Vector2(9, 55), 1.0)
-		legend_icons.draw_set_transform(Vector2(0, 23))
-		var entrance := Vector2(9, 55)
-		legend_icons.draw_circle(entrance, 5.0, ORANGE)
-		legend_icons.draw_circle(entrance, 8.5, Color(ORANGE, 0.25), false, 1.2, true)
-		_draw_elevator_icon(legend_icons, Vector2(6, 78), false, 0.72)
-		_draw_elevator_icon(legend_icons, Vector2(19, 78), true, 0.72)
-		legend_icons.draw_circle(Vector2(4, 113), 4.0, ACCESSIBLE_GALLERY_COLOR, false, 1.3, true)
-		_draw_room_state_badge(Vector2(19, 113), 0.9, false, legend_icons)
-		legend_icons.draw_circle(Vector2(4, 136), 4.0, BLOCKED_GALLERY_COLOR, false, 1.3, true)
-		_draw_blocked_exit_badge(legend_icons, Vector2(19, 136), 0.68)
-		_draw_flora_symbol(legend_icons, Vector2(9, 171), 0.85)
-		_draw_fauna_map_badge(legend_icons, Vector2(9, 194), "escarabat", 1.0, false)
-		for row_center in [171, 194]:
-			legend_icons.draw_string(ThemeDB.fallback_font, Vector2(19, row_center + 4), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ORANGE)
-		_draw_pending_mineral_badge(legend_icons, Vector2(9, 217))
-		_draw_biological_trace(legend_icons, Vector2(9, 240), false)
-		_draw_biological_trace(legend_icons, Vector2(9, 263), true)
-		legend_icons.draw_rect(Rect2(1, 293, 17, 10), Color("285571"))
-		legend_icons.draw_colored_polygon(PackedVector2Array([Vector2(9, 315), Vector2(15, 321), Vector2(9, 327), Vector2(3, 321)]), Color("abbeff"))
-		for divider_y in [95.5, 153.5, 280.5]:
-			legend_icons.draw_line(Vector2(0, divider_y), Vector2(248, divider_y), Color("1a4857"))
+		var rows := [9, 32, 55, 78, 101, 136, 159, 194, 217, 240, 263, 286, 321, 344, 367]
+		for i in range(rows.size()):
+			legend_icons.draw_set_transform(Vector2.ZERO)
+			var center := Vector2(9, rows[i])
+			match i:
+				0:
+					legend_icons.draw_circle(center, 5, ORANGE)
+					legend_icons.draw_circle(center, 8, Color("ffe2ba"), false, 1.4, true)
+				1: _draw_room_state_badge(center, 1.0, true, legend_icons)
+				2: _draw_room_complete_badge(legend_icons, center, 1.0)
+				3: legend_icons.draw_circle(center, 7, ORANGE)
+				4:
+					_draw_elevator_icon(legend_icons, center - Vector2(4,0), false, 0.65)
+					_draw_elevator_icon(legend_icons, center + Vector2(8,0), true, 0.65)
+				5: _draw_room_state_badge(center, 0.9, false, legend_icons)
+				6: _draw_blocked_exit_badge(legend_icons, center, 0.68)
+				7: legend_icons.draw_texture_rect(preload("res://assets/ui/icona_flora_generica.svg"), Rect2(center - Vector2(10,10), Vector2(20,20)), false)
+				8: legend_icons.draw_texture_rect(preload("res://assets/ui/icona_fauna_generica.svg"), Rect2(center - Vector2(10,10), Vector2(20,20)), false)
+				9: _draw_mineral_badge(legend_icons, center)
+				10: _draw_biological_trace(legend_icons, center, false)
+				11: _draw_biological_trace(legend_icons, center, true)
+				12: legend_icons.draw_rect(Rect2(center - Vector2(8,5), Vector2(17,10)), Color("285571"))
+				13: legend_icons.draw_colored_polygon(PackedVector2Array([center+Vector2(0,-6), center+Vector2(6,0), center+Vector2(0,6), center+Vector2(-6,0)]), Color("abbeff"))
+				14: _draw_workshop_badge(legend_icons, center)
 		legend_icons.draw_set_transform(Vector2.ZERO))
 	legend_content.add_child(legend_icons)
 	var legend_labels := [
@@ -2910,9 +4025,9 @@ func _build_ui() -> void:
 		"Sortida accessible pendent de recórrer", "Sortida fora d’abast",
 		"Flora · ! pendent d’analitzar", "Fauna · ! pendent d’observar", "Veta de mineral · ! pendent de minar",
 		"Rastres de flora · cal un filtre", "Rastres de fauna · cal un filtre",
-		"Galeria amb cobertura", "Balisa instal·lada",
+		"Galeria amb cobertura", "Balisa instal·lada", "Base del bioma",
 	]
-	var legend_row_centers := [9, 32, 55, 78, 101, 136, 159, 194, 217, 240, 263, 286, 321, 344]
+	var legend_row_centers := [9, 32, 55, 78, 101, 136, 159, 194, 217, 240, 263, 286, 321, 344, 367]
 	for index in range(legend_labels.size()):
 		_add_label(legend_content, legend_labels[index], 12, Color("dcecf0"), Vector2(43, legend_row_centers[index] + 2), Vector2(221, 20))
 	_build_level_progress_strip()
@@ -2924,9 +4039,9 @@ func _build_ui() -> void:
 	var groups := HBoxContainer.new()
 	groups.add_theme_constant_override("separation", 16)
 	equipment_bar.add_child(groups)
-	inventory_strip_values.resize(STRIP_MEDKIT_SLOT + 1)
+	inventory_strip_values.resize(21)
 	_add_inventory_strip_group(groups, "RECURSOS", [0, STRIP_QUARTZ_SLOT, STRIP_MAGNETITE_SLOT, 6])
-	_add_inventory_strip_group(groups, "EQUIP", [STRIP_HEALTH_SLOT, STRIP_OXYGEN_SLOT, 4, 9, 5, 3, STRIP_BIO_SCANNER_SLOT, 1, STRIP_LADDER_SLOT, 10, STRIP_MEDKIT_SLOT])
+	_add_inventory_strip_group(groups, "EQUIP", [STRIP_HEALTH_SLOT,20,19, STRIP_OXYGEN_SLOT, 4, 9, 5, 3, STRIP_BIO_SCANNER_SLOT, 1, STRIP_LADDER_SLOT, 10, STRIP_MEDKIT_SLOT])
 	_add_inventory_strip_group(groups, "RECERCA", [7, 8])
 
 	navigation_panel = _panel(Rect2(0, 0, 620, 48))
@@ -2950,6 +4065,29 @@ func _build_ui() -> void:
 	room_progress_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	room_progress_label.draw.connect(_draw_isometric_room_badges)
 	room_progress_label.hide()
+	room_details_panel = _panel(Rect2(0, 0, 280, 292))
+	ui_root.add_child(room_details_panel)
+	room_details_panel.get_child(0).hide()
+	room_details_panel.draw.connect(func() -> void:
+		_draw_room_register_frame())
+	room_details_title = _add_label(room_details_panel, "REGISTRE D’EXPEDICIÓ", 16, Color("e4f1f1"), Vector2(16, 12), Vector2(248, 24))
+	room_details_status = _add_label(room_details_panel, "", 12, CYAN, Vector2(16, 42), Vector2(248, 22))
+	room_details_meter = _new_resource_meter(100.0, CYAN)
+	room_details_meter.position = Vector2(16, 68)
+	room_details_meter.size = Vector2(248, 7)
+	room_details_panel.add_child(room_details_meter)
+	room_details_label = _add_label(room_details_panel, "", 12, Color("dcecf0"), Vector2(16, 88), Vector2(248, 192))
+	room_details_label.add_theme_constant_override("line_spacing", 5)
+	room_details_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	room_details_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	room_details_rows = VBoxContainer.new()
+	room_details_rows.position = Vector2(16, 88)
+	room_details_rows.size = Vector2(248, 192)
+	room_details_rows.add_theme_constant_override("separation", 3)
+	room_details_rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	room_details_panel.add_child(room_details_rows)
+	room_details_label.hide()
+	room_details_panel.hide()
 	light_warning_label = _add_label(ui_root, "", 16, Color("ffd48a"), Vector2.ZERO, Vector2(280, 44))
 	light_warning_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	light_warning_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -2977,12 +4115,16 @@ func _build_ui() -> void:
 		var destination: int = current_level - 1 if selected_cave == world.entry else current_level + 1
 		_confirm_depth_action(destination, _use_selected_level_access))
 	navigation_panel.add_child(lower_level_button)
+	unstuck_navigation_button=_button("DESENCALLA · F8",Vector2.ZERO,Vector2(172,30))
+	unstuck_navigation_button.tooltip_text="Recupera l’explorador en un punt lliure proper sense canviar de sala ni recarregar recursos."
+	unstuck_navigation_button.pressed.connect(_recover_stuck_explorer)
+	navigation_panel.add_child(unstuck_navigation_button)
 	var navigation_idle := StyleBoxFlat.new()
 	navigation_idle.bg_color = Color("173244")
 	navigation_idle.set_corner_radius_all(4)
 	var navigation_hover := navigation_idle.duplicate() as StyleBoxFlat
 	navigation_hover.bg_color = CYAN
-	for button in [map_return_button, inspect_room_button, fit_map_button, center_explorer_button, base_return_button, descend_navigation_button, lower_level_button]:
+	for button in [map_return_button, inspect_room_button, fit_map_button, center_explorer_button, biome_base_return_button, base_return_button, descend_navigation_button, lower_level_button, unstuck_navigation_button]:
 		button.add_theme_stylebox_override("normal", navigation_idle)
 		button.add_theme_stylebox_override("hover", navigation_hover)
 		button.add_theme_stylebox_override("pressed", navigation_hover)
@@ -3030,6 +4172,8 @@ func _update_equipment_action_pulses() -> void:
 			available = false
 		if button == medkit_button and health > 65.0:
 			available = false
+		if button == oxygen_reserve_card_button and oxygen_seconds > _oxygen_capacity() * LOW_SUPPLY_PERCENT / 100.0:
+			available = false
 		if available:
 			pulsing_equipment_actions[button] = true
 			button.queue_redraw()
@@ -3069,12 +4213,14 @@ func _new_equipment_icon_button(icon: String) -> Button:
 		button.draw_set_transform(Vector2.ZERO))
 	return button
 
+
 func _build_inventory_and_workshop() -> void:
 	inventory_window = AcceptDialog.new()
 	inventory_window.title = "EQUIP DE L’EXPEDICIÓ"
 	inventory_window.ok_button_text = "TANCA"
 	add_child(inventory_window)
 	inventory_tabs = TabContainer.new()
+	inventory_tabs.use_hidden_tabs_for_min_size = false
 	inventory_window.add_child(inventory_tabs)
 	inventory_tabs.tab_changed.connect(_resize_inventory_tab)
 	var pack := MarginContainer.new()
@@ -3083,11 +4229,16 @@ func _build_inventory_and_workshop() -> void:
 		pack.add_theme_constant_override("margin_" + side, 18)
 	inventory_tabs.add_child(pack)
 	var grid := GridContainer.new()
-	grid.columns = 3
+	grid.columns = 4
+	grid.size_flags_horizontal=Control.SIZE_EXPAND_FILL
 	grid.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	grid.add_theme_constant_override("h_separation", 8)
 	grid.add_theme_constant_override("v_separation", 8)
-	pack.add_child(grid)
+	var inventory_scroll := ScrollContainer.new()
+	inventory_scroll.custom_minimum_size=Vector2(420,260)
+	inventory_scroll.horizontal_scroll_mode=ScrollContainer.SCROLL_MODE_DISABLED
+	pack.add_child(inventory_scroll)
+	inventory_scroll.add_child(grid)
 	for title in ["Botes", "Escàner biològic", "Vestit espacial", "Eina de mineria"]:
 		_add_inventory_item(grid, title)
 	for supply_id: String in SUPPLY_UPGRADES:
@@ -3109,6 +4260,7 @@ func _build_inventory_and_workshop() -> void:
 	var supplies := _add_workshop_column(columns, "Subministraments", 2)
 	var repairs := _add_workshop_column(columns, "Reparacions")
 	var upgrades := _add_workshop_column(columns, "Millores d’equipament")
+	upgrades.get_parent().size_flags_stretch_ratio=2.0
 	refill_oxygen_button = _button("RECARREGA · %d DE FERRO" % OXYGEN_REFILL_COST, Vector2.ZERO, Vector2.ZERO)
 	refill_oxygen_button.pressed.connect(_refill_oxygen_at_base)
 	_add_supply_offer(supplies, "oxygen_tank", refill_oxygen_button)
@@ -3139,7 +4291,7 @@ func _build_inventory_and_workshop() -> void:
 	buy_medkit_button = _button("COMPRA · %d DE FERRO" % MEDKIT_COST, Vector2.ZERO, Vector2.ZERO)
 	buy_medkit_button.pressed.connect(_buy_medkit)
 	_add_supply_offer(supplies, "medkit", buy_medkit_button)
-	repair_folding_ladder_button = _button("REPARA · %d DE FERRO" % FOLDING_LADDER_REPAIR_COST, Vector2.ZERO, Vector2.ZERO)
+	repair_folding_ladder_button = _button("REPOSA USOS · %d DE FERRO" % FOLDING_LADDER_REPAIR_COST, Vector2.ZERO, Vector2.ZERO)
 	repair_folding_ladder_button.pressed.connect(_repair_folding_ladder)
 	_add_supply_offer(supplies, "ladder", repair_folding_ladder_button)
 	upgrade_bio_scanner_button = _button("", Vector2.ZERO, Vector2.ZERO)
@@ -3152,11 +4304,26 @@ func _build_inventory_and_workshop() -> void:
 	_add_equipment_modifiers(suit_upgrade_offer, "vestit")
 	_add_equipment_modifiers(mining_offer, "mineria")
 	_add_equipment_modifiers(scanner_upgrade_offer, "escaner")
+	defence_system.build_ui(self,grid,upgrades)
 
 func _add_equipment_modifiers(offer: Label, slot: String) -> void:
 	var contents := offer.get_parent() as VBoxContainer
-	contents.add_child(HSeparator.new())
-	_add_equipment_label(contents, "Modificadors", 11, MUTED)
+	var original := contents.get_children()
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation",12)
+	contents.add_child(row)
+	var equipment := VBoxContainer.new()
+	equipment.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+	equipment.custom_minimum_size.x=170
+	row.add_child(equipment)
+	for child in original: child.reparent(equipment)
+	row.add_child(VSeparator.new())
+	var modifiers := VBoxContainer.new()
+	modifiers.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+	modifiers.custom_minimum_size.x=210
+	modifiers.add_theme_constant_override("separation",6)
+	row.add_child(modifiers)
+	_add_equipment_label(modifiers, "MODIFICADORS", 12, CYAN)
 	for id: String in EQUIPMENT_MODIFIERS:
 		var data: Array = EQUIPMENT_MODIFIERS[id]
 		if data[0] != slot:
@@ -3165,12 +4332,12 @@ func _add_equipment_modifiers(offer: Label, slot: String) -> void:
 		button.custom_minimum_size.y = 36.0
 		button.pressed.connect(_apply_equipment_modifier.bind(id))
 		modifier_buttons[id] = button
-		contents.add_child(button)
+		modifiers.add_child(button)
 
 func _apply_equipment_modifier(id: String) -> void:
-	if not _can_use_workshop():
-		return
+	if not EQUIPMENT_MODIFIERS.has(id): return
 	if not owned_modifiers.has(id):
+		if not _can_use_workshop(): return
 		if not _can_upgrade_equipment(MODIFIER_MATERIAL_COST, MODIFIER_RESEARCH_COST):
 			return
 		materials_in_pack -= MODIFIER_MATERIAL_COST
@@ -3182,7 +4349,11 @@ func _apply_equipment_modifier(id: String) -> void:
 		equipped_modifiers.erase(slot)
 	else:
 		equipped_modifiers[slot] = id
+	_detect_fauna_near_unit()
 	_update_research_panel()
+	_update_flora_button()
+	_save_active_profile()
+	queue_redraw()
 
 func _modifier_protects(slot: String, condition: String) -> bool:
 	if not equipped_modifiers.has(slot):
@@ -3193,6 +4364,10 @@ func _room_environment(cave_id: int) -> String:
 	if current_level < 2 or cave_id < 0 or cave_id == world.entry or cave_id == descent_access:
 		return ""
 	var roll := posmod(hash([seed_value, current_level, cave_id, "oxidized_environment_v1"]), 12)
+	match _biome_at_depth(current_level):
+		7: return "gel" if roll<9 else ""
+		10: return "aigua" if roll<8 else ""
+		13: return "calent" if roll<9 else ""
 	if roll < 2:
 		return "aigua"
 	if roll < 4:
@@ -3233,6 +4408,9 @@ func _room_needs_ferric_filter(cave_id: int) -> bool:
 	return _has_undetectable_trace(cave_id, false) or _has_undetectable_trace(cave_id, true)
 
 func _has_undetectable_trace(cave_id: int, fauna: bool) -> bool:
+	if fauna:
+		var corpse := defence_system.predator(self,cave_id)
+		if not corpse.is_empty() and float(corpse.hp)<=0: return false
 	var sites := fauna_sites if fauna else flora_sites
 	var analyzed := analyzed_fauna if fauna else analyzed_flora
 	var species := fauna_species_by_room if fauna else flora_species_by_room
@@ -3298,7 +4476,10 @@ func _add_inventory_strip_group(groups: HBoxContainer, title: String, slots: Arr
 	section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var style := _section_style()
 	style.set_content_margin_all(7)
+	style.draw_center = false
+	style.set_border_width_all(0)
 	section.add_theme_stylebox_override("panel", style)
+	_install_inventory_frame(section, true)
 	groups.add_child(section)
 	var group := VBoxContainer.new()
 	section.add_child(group)
@@ -3308,9 +4489,9 @@ func _add_inventory_strip_group(groups: HBoxContainer, title: String, slots: Arr
 	cards.columns = slots.size()
 	cards.add_theme_constant_override("h_separation", 6)
 	group.add_child(cards)
-	var meter_colors := {1: Color("abbeff"), STRIP_HEALTH_SLOT: Color("f07779"), STRIP_OXYGEN_SLOT: CYAN, 4: Color("abbeff"), 5: Color("ffd48a"), 3: Color("b6d79a"), 9: Color("d7affe"), STRIP_BIO_SCANNER_SLOT: CYAN}
+	var meter_colors := {1: Color("abbeff"), STRIP_HEALTH_SLOT: Color("f07779"), STRIP_OXYGEN_SLOT: CYAN, 4: Color("abbeff"), 5: Color("ffd48a"), 3: Color("b6d79a"), 9: Color("d7affe"), STRIP_BIO_SCANNER_SLOT: CYAN,19:ORANGE,20:CYAN}
 	for index in slots:
-		var caption: String = INVENTORY_TITLES[index] if index < INVENTORY_TITLES.size() else {STRIP_HEALTH_SLOT: "Vida", STRIP_OXYGEN_SLOT: "Dipòsit d’oxigen", STRIP_QUARTZ_SLOT: "Quars", STRIP_MAGNETITE_SLOT: "Magnetita", STRIP_MEDKIT_SLOT: "Farmaciola"}[index]
+		var caption: String = INVENTORY_TITLES[index] if index < INVENTORY_TITLES.size() else {STRIP_HEALTH_SLOT: "Vida", STRIP_OXYGEN_SLOT: "Dipòsit d’oxigen", STRIP_QUARTZ_SLOT: "Quars", STRIP_MAGNETITE_SLOT: "Magnetita", STRIP_MEDKIT_SLOT: "Farmaciola",19:"Projector de polsos",20:"Escut personal"}[index]
 		var meter: ProgressBar
 		if meter_colors.has(index):
 			meter = _new_resource_meter(100.0, meter_colors[index])
@@ -3325,6 +4506,44 @@ func _add_inventory_strip_group(groups: HBoxContainer, title: String, slots: Arr
 		if meter != null or index == 10:
 			card.draw.connect(_draw_low_supply_card.bind(card, index))
 		var footer := _add_inventory_strip_footer(contents)
+		if index in [19,20]: defence_system.attach_footer(self,footer,index)
+		var modifier_slots := {9: "botes", 4: "vestit", STRIP_MINING_SLOT: "mineria", STRIP_BIO_SCANNER_SLOT: "escaner"}
+		if title=="EQUIP":
+			var body := contents.get_child(0) as VBoxContainer
+			body.get_child(0).hide()
+			var equipment_heading := HBoxContainer.new()
+			equipment_heading.alignment=BoxContainer.ALIGNMENT_CENTER
+			body.add_child(equipment_heading)
+			body.move_child(equipment_heading,0)
+			var cells := {STRIP_HEALTH_SLOT:0,20:1,19:2,STRIP_OXYGEN_SLOT:3,4:4,9:5,5:6,STRIP_MINING_SLOT:7,STRIP_BIO_SCANNER_SLOT:8,1:9,STRIP_LADDER_SLOT:10,10:11,STRIP_MEDKIT_SLOT:12}
+			var sheet: Texture2D=load("res://assets/ui/equip_pixel_art_detall.png")
+			var cell: Vector2=sheet.get_size()/4.0
+			var cell_id: int=cells.get(index,11)
+			var texture := AtlasTexture.new()
+			texture.atlas=sheet
+			texture.region=Rect2(Vector2(cell_id%4,cell_id/4)*cell,cell)
+			texture.filter_clip=true
+			var icon := TextureRect.new()
+			icon.texture=texture
+			icon.texture_filter=CanvasItem.TEXTURE_FILTER_NEAREST
+			icon.custom_minimum_size=Vector2(48,48)
+			icon.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+			icon.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			icon.tooltip_text=caption
+			icon.mouse_filter=Control.MOUSE_FILTER_STOP
+			card.tooltip_text=caption
+			equipment_heading.add_child(icon)
+			if modifier_slots.has(index): _add_modifier_menu(equipment_heading,modifier_slots[index])
+		if index in [0, STRIP_QUARTZ_SLOT, STRIP_MAGNETITE_SLOT, 6]:
+			footer.hide()
+			var body := contents.get_child(0) as VBoxContainer
+			var illustration := Control.new()
+			illustration.custom_minimum_size = Vector2(48, 56)
+			illustration.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			illustration.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			body.add_child(illustration)
+			body.move_child(illustration, 0)
+			illustration.draw.connect(_draw_resource_card_art.bind(illustration, index))
 		if index == 10:
 			repair_kit_footer = footer
 			footer.draw.connect(_draw_repair_kit_icon.bind(footer))
@@ -3368,6 +4587,38 @@ func _add_inventory_strip_group(groups: HBoxContainer, title: String, slots: Arr
 				beacon_signal_meter = meter
 				beacon_footer = footer
 				footer.draw.connect(_draw_beacon_footer)
+
+func _draw_resource_card_art(canvas: Control, index: int) -> void:
+	if index == 6:
+		if research_hud_texture == null:
+			var image := RESEARCH_MICROSCOPE.get_image()
+			image = image.get_region(image.get_used_rect())
+			# Prefilter the detailed source once instead of skipping source pixels at HUD size.
+			var extent := Vector2(image.get_size())
+			extent *= 52.0 / extent.y
+			image.resize(maxi(1, roundi(extent.x)), 52, Image.INTERPOLATE_LANCZOS)
+			research_hud_texture = ImageTexture.create_from_image(image)
+		var lab_extent := Vector2(research_hud_texture.get_size())
+		var lab_destination := Rect2(((Vector2(canvas.size.x, 56) - lab_extent) * 0.5).floor(), lab_extent)
+		canvas.draw_texture_rect(research_hud_texture, lab_destination, false)
+		return
+	var column := 0 if index == 0 else (1 if index == STRIP_QUARTZ_SLOT else 2)
+	var cell := Vector2(MINERAL_ROCK_SPRITES.get_size()) / Vector2(4, 1)
+	if not resource_card_regions.has(column):
+		var image := MINERAL_ROCK_SPRITES.get_image()
+		var low := Vector2i(cell)
+		var high := Vector2i.ZERO
+		# Ignore almost invisible alpha specks in the atlas padding when fitting UI art.
+		for y in range(int(cell.y)):
+			for x in range(int(cell.x)):
+				if image.get_pixel(column * int(cell.x) + x, y).a >= 0.15:
+					low = Vector2i(mini(low.x, x), mini(low.y, y))
+					high = Vector2i(maxi(high.x, x + 1), maxi(high.y, y + 1))
+		resource_card_regions[column] = Rect2(Vector2(column * cell.x, 0) + Vector2(low), Vector2(high - low))
+	var source: Rect2 = resource_card_regions[column]
+	var extent := source.size * minf((canvas.size.x - 8.0) / source.size.x, 52.0 / source.size.y)
+	var destination := Rect2(((Vector2(canvas.size.x, 56) - extent) * 0.5).floor(), extent)
+	canvas.draw_texture_rect_region(MINERAL_ROCK_SPRITES, destination, source)
 
 func _draw_beacon_footer() -> void:
 	var width := beacon_footer.size.x
@@ -3610,11 +4861,14 @@ func _add_equipment_card(grid: GridContainer, minimum_size: Vector2, meter: Prog
 	frame.border_color = Color("285262")
 	frame.set_border_width_all(1)
 	frame.set_corner_radius_all(5)
+	frame.draw_center = false
+	frame.set_border_width_all(0)
 	frame.content_margin_left = 6
 	frame.content_margin_right = 6
 	frame.content_margin_top = 6
 	frame.content_margin_bottom = 6
 	slot.add_theme_stylebox_override("panel", frame)
+	_install_inventory_frame(slot)
 	grid.add_child(slot)
 	var contents := VBoxContainer.new()
 	if meter == null:
@@ -3627,6 +4881,61 @@ func _add_equipment_card(grid: GridContainer, minimum_size: Vector2, meter: Prog
 		row.add_child(contents)
 		row.add_child(meter)
 	return contents
+
+
+func _inventory_frame_outline(area: Rect2, cut: float) -> PackedVector2Array:
+	var a := area.position.round()
+	var b := area.end.round()
+	var c := minf(cut, minf(area.size.x, area.size.y) * 0.25)
+	# Two-pixel steps give the cut corners a crisp sprite-like silhouette.
+	var result := PackedVector2Array([Vector2(a.x + c, a.y), Vector2(b.x - c, a.y)])
+	for i in range(0, int(c), 2):
+		result.append(Vector2(b.x - c + i + 2, a.y + i))
+		result.append(Vector2(b.x - c + i + 2, a.y + i + 2))
+	result.append(Vector2(b.x, b.y - c))
+	for i in range(0, int(c), 2):
+		result.append(Vector2(b.x - i, b.y - c + i + 2))
+		result.append(Vector2(b.x - i - 2, b.y - c + i + 2))
+	result.append(Vector2(a.x + c, b.y))
+	for i in range(0, int(c), 2):
+		result.append(Vector2(a.x + c - i - 2, b.y - i))
+		result.append(Vector2(a.x + c - i - 2, b.y - i - 2))
+	result.append(Vector2(a.x, a.y + c))
+	for i in range(0, int(c), 2):
+		result.append(Vector2(a.x + i, a.y + c - i - 2))
+		result.append(Vector2(a.x + i + 2, a.y + c - i - 2))
+	return result
+
+func _install_inventory_frame(panel: PanelContainer, outer: bool = false) -> void:
+	var art := Control.new()
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	art.show_behind_parent = true
+	panel.add_child(art)
+	panel.draw.connect(func() -> void: art.queue_redraw())
+	art.draw.connect(func() -> void:
+		art.draw_set_transform(-art.position)
+		var active := panel == helmet_light_card and (flashlight_on or light_warning_strength > 0.0)
+		for slot in field_action_cards:
+			if field_action_cards[slot] == panel and float(field_action_progress.get(slot, -1.0)) >= 0.0:
+				active = true
+		var bounds := Rect2(Vector2.ONE, (panel.size - Vector2(2, 2)).floor())
+		if bounds.size.x < 20 or bounds.size.y < 20:
+			return
+		var accent := Color("ff7a23") if active else Color("698c97")
+		if outer:
+			accent = Color("7d4835")
+		for inset in range(4):
+			var polygon := _inventory_frame_outline(bounds.grow(-inset), 8.0)
+			var colors := [Color("02070a"), accent.darkened(0.55), accent, Color("101c22")]
+			art.draw_colored_polygon(polygon, colors[inset])
+		var face := _inventory_frame_outline(bounds.grow(-4), 6.0)
+		art.draw_colored_polygon(face, Color("070e13"))
+		art.draw_rect(Rect2(11, 4, maxf(0, panel.size.x - 22), 1), Color("b7d9dc") if not outer else Color("ee793c"))
+		art.draw_rect(Rect2(4, 11, 1, minf(19, panel.size.y - 22)), Color("b7d9dc") if not outer else Color("ee793c"))
+		if active:
+			art.draw_rect(Rect2(10, panel.size.y - 5, panel.size.x - 20, 2), Color("ff9a35"))
+			art.draw_rect(Rect2(12, panel.size.y - 7, panel.size.x - 24, 2), Color("8d3319"))
+		art.draw_set_transform(Vector2.ZERO))
 
 func _add_equipment_label(contents: BoxContainer, title: String, font_size: int, color: Color) -> Label:
 	var caption := Label.new()
@@ -3654,6 +4963,9 @@ func _is_biome_workshop(cave_id: int) -> bool:
 func _depth_has_workshop(depth: int) -> bool:
 	return depth > 0 and depth < CAMPAIGN_DEPTH and DEPTH_ZONE_NAMES.has(depth)
 
+func _biome_base_name(depth: int) -> String:
+	return "Base – %s" % _profile_biome_name(depth)
+
 func _can_use_workshop() -> bool:
 	return surface_mode or (not moving and not world.is_empty() and _is_biome_workshop(_cave_at_position(unit_position)))
 
@@ -3662,13 +4974,15 @@ func _open_inventory(workshop: bool) -> void:
 	inventory_tabs.current_tab = 1 if workshop else 0
 	inventory_window.popup_centered(_inventory_tab_size(inventory_tabs.current_tab))
 	_resize_inventory_tab(inventory_tabs.current_tab)
+	# Wrapped labels need their final column widths before the window can shrink.
+	var resize := _resize_inventory_tab.bind(inventory_tabs.current_tab)
+	if not get_tree().process_frame.is_connected(resize):
+		get_tree().process_frame.connect(resize, CONNECT_ONE_SHOT)
 
 func _inventory_tab_size(tab: int) -> Vector2i:
 	var viewport_size := Vector2i(get_viewport_rect().size)
 	var available_height := maxi(1, floori(equipment_bar.position.y) - 52)
-	if tab >= 1:
-		return Vector2i(viewport_size.x - 36, available_height)
-	return Vector2i(480, mini(580, available_height))
+	return Vector2i(viewport_size.x - 36, available_height)
 
 func _resize_inventory_tab(tab: int) -> void:
 	if not inventory_window.visible:
@@ -3680,14 +4994,28 @@ func _resize_inventory_tab(tab: int) -> void:
 
 func _add_inventory_item(grid: GridContainer, title: String) -> void:
 	var level_label := _add_inventory_slot(grid, title)
+	level_label.get_parent().get_parent().custom_minimum_size.y=150
 	inventory_values.append(level_label)
 	var detail := _add_equipment_label(level_label.get_parent(), "", 11, MUTED)
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	inventory_details.append(detail)
+	var level_meter := _new_resource_meter(MAX_EQUIPMENT_LEVEL,CYAN)
+	level_meter.custom_minimum_size=Vector2(0,10)
+	level_label.get_parent().add_child(level_meter)
+	inventory_level_meters.append(level_meter)
+	var condition_meter := _new_resource_meter(100,Color("b7d787"))
+	condition_meter.custom_minimum_size=Vector2(0,12)
+	level_label.get_parent().add_child(condition_meter)
+	inventory_condition_meters.append(condition_meter)
+	var slots := ["botes", "escaner", "vestit", "mineria"]
+	if inventory_details.size() <= slots.size():
+		_add_modifier_menu(level_label.get_parent(), slots[inventory_details.size() - 1])
 
 func _update_inventory_screen() -> void:
 	if not is_instance_valid(inventory_tabs):
 		return
+	if inventory_strip_meters.has(STRIP_OXYGEN_SLOT) and resource_gain_cards.has(10):
+		_update_low_supply_warning(0.0)
 	folding_ladder_icon.queue_redraw()
 	var charge := _flashlight_charge_percent()
 	var samples := _sample_totals()
@@ -3722,11 +5050,18 @@ func _update_inventory_screen() -> void:
 	for index in range(tiers.size()):
 		inventory_values[index].text = "Nivell %d" % (int(tiers[index]) + 1)
 		inventory_details[index].text = details[index]
+		inventory_level_meters[index].value=int(tiers[index])+1
+		inventory_level_meters[index].tooltip_text="Nivell %d / %d" % [int(tiers[index])+1,MAX_EQUIPMENT_LEVEL]
+	var conditions := [boots_integrity,bio_scanner_integrity,suit_integrity,mining_tool_integrity,oxygen_seconds*100.0/_oxygen_capacity(),100.0 if oxygen_cartridges>0 else 0.0,float(charge),beacon_signal_meter.value,100.0 if medkits>0 else 0.0,_repair_kit_uses_percent(),100.0*_ladder_uses_left()/maxi(1,_ladder_capacity())]
+	for index in range(inventory_condition_meters.size()):
+		inventory_condition_meters[index].value=conditions[index]
+		inventory_condition_meters[index].tooltip_text="Estat / reserves · %d%%" % roundi(conditions[index])
 	var equipment_slots := ["botes", "escaner", "vestit", "mineria"]
 	for index in range(equipment_slots.size()):
 		var equipped_id: String = equipped_modifiers.get(equipment_slots[index], "")
 		if not equipped_id.is_empty():
-			inventory_details[index].text += "\n" + EQUIPMENT_MODIFIERS[equipped_id][1]
+			inventory_details[index].text += "\nACTIU · " + EQUIPMENT_MODIFIERS[equipped_id][1]
+	_update_modifier_menus()
 	_update_boots_display()
 	var helmet_color := ORANGE if charge <= LOW_SUPPLY_PERCENT else (Color("ffd48a") if flashlight_on else CYAN)
 	inventory_strip_values[5].add_theme_color_override("font_color", helmet_color)
@@ -3748,7 +5083,7 @@ func _update_inventory_screen() -> void:
 	_update_health_display()
 	repair_folding_ladder_button.disabled = not workshop_available or materials_in_pack < FOLDING_LADDER_REPAIR_COST or ladder_uses_spent == 0
 	if workshop_available:
-		workshop_materials_balance.text += " · Taller de superfície" if surface_mode else " · Taller del bioma"
+		workshop_materials_balance.text += " · Base de superfície" if surface_mode else " · " + _biome_base_name(current_level)
 	else:
 		workshop_materials_balance.text += " · Ves al taller de superfície o a l’entrada d’un bioma"
 	refill_oxygen_button.disabled = not workshop_available or materials_in_pack < OXYGEN_REFILL_COST or oxygen_seconds >= _oxygen_capacity()
@@ -3759,7 +5094,7 @@ func _update_inventory_screen() -> void:
 		var action := modifier_buttons[id]
 		var slot: String = EQUIPMENT_MODIFIERS[id][0]
 		var equipped: bool = equipped_modifiers.get(slot, "") == id
-		action.disabled = not workshop_available or (not owned_modifiers.has(id) and not _can_upgrade_equipment(MODIFIER_MATERIAL_COST, MODIFIER_RESEARCH_COST))
+		action.disabled = not owned_modifiers.has(id) and (not workshop_available or not _can_upgrade_equipment(MODIFIER_MATERIAL_COST, MODIFIER_RESEARCH_COST))
 		var caption := "ACTIU · DESACTIVA" if equipped else ("ACTIVA" if owned_modifiers.has(id) else "COMPRA I ACTIVA · %d FERRO + %d PUNT" % [MODIFIER_MATERIAL_COST, MODIFIER_RESEARCH_COST])
 		action.text = "%s\n%s" % [EQUIPMENT_MODIFIERS[id][1], caption]
 		action.tooltip_text = EQUIPMENT_MODIFIERS[id][2]
@@ -3895,10 +5230,11 @@ func _buy_repair_kit() -> void:
 	status_label.text = "CAIXA D’EINES COMPRADA"
 
 func _can_use_repair_kit() -> bool:
-	return not surface_mode and analysis_mode and selected_cave == current_cave_id and _repair_kit_uses_left() > 0 and mining_cave < 0 and bio_scan_room < 0
+	return not death_dialog.visible and not victory_dialog.visible and _repair_kit_uses_left() > 0 and mining_cave < 0 and bio_scan_room < 0
 
 func _open_field_repair_menu() -> void:
 	if not _can_use_repair_kit():
+		_action_notice("CAIXA D’EINES ESGOTADA · Reposa usos a Equip i millores" if _repair_kit_uses_left()<=0 else "ACABA L’ACCIÓ EN CURS ABANS DE REPARAR")
 		return
 	field_repair_menu.set_item_disabled(0, suit_integrity >= 100.0)
 	field_repair_menu.set_item_disabled(1, boots_integrity >= 100.0)
@@ -3931,6 +5267,8 @@ func _apply_field_repair(target: int) -> void:
 	repair_kit_uses_spent += 1
 	_update_equipment_display()
 	status_label.text = "REPARACIÓ DE CAMP COMPLETADA"
+	_update_inventory_screen()
+	_save_active_profile()
 
 func _buy_boots() -> void:
 	if not _pay_equipment_upgrade(equipped_boots, "Botes"):
@@ -4042,7 +5380,7 @@ func _repair_folding_ladder() -> void:
 	materials_in_pack -= FOLDING_LADDER_REPAIR_COST
 	ladder_uses_spent = 0
 	_update_equipment_display()
-	status_label.text = "ESCALA PLEGABLE REPARADA"
+	status_label.text = "USOS DE L’ESCALA REPOSATS"
 
 func _mining_model(tier: int) -> String:
 	return MINING_TOOLS[mini(tier, MINING_TOOLS.size() - 1)]
@@ -4085,8 +5423,9 @@ func _build_depth_selector(parent: Control) -> void:
 		if DEPTH_ZONE_NAMES.has(level):
 			if level > 1:
 				list.add_child(HSeparator.new())
-			var heading := _add_equipment_label(list, DEPTH_ZONE_NAMES[level], 11, Color("abbeff"))
+			var heading := _add_equipment_label(list, _profile_biome_name(level), 11, Color("abbeff"))
 			heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+			depth_zone_headings[level] = heading
 		var caption := "Superfície · 0" if level == 0 else "Estrat −%d" % level
 		var row := _button(caption, Vector2.ZERO, Vector2.ZERO, true)
 		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -4130,6 +5469,8 @@ func _show_depth_rewards() -> void:
 	rewards_dialog.popup_centered(Vector2i(480, 0))
 
 func _refresh_depth_selector() -> void:
+	for depth in depth_zone_headings:
+		depth_zone_headings[depth].text = _profile_biome_name(depth)
 	if depth_rows.is_empty() or world.is_empty():
 		return
 	for level in range(CAMPAIGN_DEPTH + 1):
@@ -4145,7 +5486,7 @@ func _refresh_depth_selector() -> void:
 		elif not discovered:
 			caption += " · PER DESCOBRIR"
 		if discovered and _depth_has_workshop(level):
-			caption += " · Taller"
+			caption += " · Base"
 		row.text = ("%s  " % ("●" if active else "○")) + caption
 		row.add_theme_color_override("font_color", CYAN if active else (Color("dcecf0") if discovered else MUTED))
 		depth_percentages[level].text = "—"
@@ -4163,7 +5504,7 @@ func _refresh_depth_selector() -> void:
 		if DEPTH_REWARDS.has(level):
 			row.tooltip_text += "\n%s · %s" % [DEPTH_REWARDS[level], "Desbloquejada" if deepest_reached >= level else "Pendent"]
 		if _depth_has_workshop(level):
-			row.tooltip_text += "\nClica per anar al taller del bioma."
+			row.tooltip_text += "\n" + _biome_base_name(level)
 
 func _depth_discovery_counts(state: Dictionary) -> Array[Vector2i]:
 	var saved_world: Dictionary = state.world
@@ -4213,7 +5554,7 @@ func _fit_discovered_map() -> void:
 		var half_width := Vector2.ONE * float(corridor.width) * 0.5
 		var spans := _map_gallery_spans(corridor)
 		if analysis_mode:
-			spans = [corridor.points] if _gallery_has_lamps(corridor) or corridor.id in [inspection_corridor_id, isometric_passage_id] else walked_gallery_spans.get(corridor.id, [])
+			spans = [corridor.points] if _gallery_has_lamps(corridor) or corridor.id in [inspection_corridor_id, isometric_passage_id] else _drawn_gallery_spans(corridor)
 		for span: PackedVector2Array in spans:
 			for point in (span if analysis_mode else _map_gallery_span_at_mouths(span, corridor)):
 				bounds = bounds.expand(point - half_width).expand(point + half_width)
@@ -4284,6 +5625,8 @@ func _layout_catalogs_panel() -> void:
 	var panels: Array[Control] = [map_legend_panel, catalogs_panel]
 	if level_panel.visible:
 		panels.append(level_panel)
+	if is_instance_valid(room_details_panel) and room_details_panel.visible:
+		panels.append(room_details_panel)
 	var total_height := 0.0
 	for panel in panels:
 		total_height += panel.size.y
@@ -4308,6 +5651,7 @@ func _new_resource_meter(capacity: float, color: Color) -> ProgressBar:
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return bar
 
+
 func _panel(rect: Rect2) -> Control:
 	var panel := Control.new()
 	panel.position = rect.position
@@ -4315,17 +5659,20 @@ func _panel(rect: Rect2) -> Control:
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var background := Panel.new()
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	background.add_theme_stylebox_override("panel", _section_style())
+	background.add_theme_stylebox_override("panel", preload("res://scripts/interface_theme.gd").frame())
 	panel.add_child(background)
 	return panel
+
 
 func _section_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = PANEL
-	style.border_color = Color("1a4857")
+	style.bg_color = Color("050e12")
+	style.border_color = Color("527f89")
 	style.set_border_width_all(1)
-	style.set_corner_radius_all(6)
+	style.set_corner_radius_all(0)
 	return style
+
 
 func _add_section_frame(parent: Control, bounds: Rect2) -> Panel:
 	var frame := Panel.new()
@@ -4336,6 +5683,7 @@ func _add_section_frame(parent: Control, bounds: Rect2) -> Panel:
 	parent.add_child(frame)
 	parent.move_child(frame, 0)
 	return frame
+
 
 func _add_label(parent: Control, value: String, font_size: int, color: Color, pos: Vector2, extent: Vector2) -> Label:
 	var label := Label.new()
@@ -4370,6 +5718,7 @@ func _button(value: String, pos: Vector2, extent: Vector2, secondary: bool = fal
 	button.size = extent
 	return button
 
+
 func _on_new_pressed() -> void:
 	map_options_window.hide()
 	var parsed := seed_edit.text.strip_edges().to_int()
@@ -4379,9 +5728,10 @@ func _on_new_pressed() -> void:
 	_save_active_profile()
 
 func _pick_biome_species(species: Dictionary, depth: int, rng: RandomNumberGenerator, basic_scanner_only: bool = false) -> String:
-	var biome := depth if depth >= 19 else 1 + floori(float(depth - 1) / 3.0) * 3
+	var biome := _biome_at_depth(depth)
 	var native: Array[String] = []
 	for id in species:
+		if species[id].get("predator",false): continue
 		if basic_scanner_only and id in ["molsa_ferrica", "escarabat_ferric"]:
 			continue
 		if int(species[id].get("biome", 1)) == biome:
@@ -4489,6 +5839,7 @@ func _place_fauna_sites(depth: int = 1) -> void:
 	fauna_species_by_room.clear()
 	fauna_patrol_ends.clear()
 	fauna_time = 0.0
+	fauna_pause.clear()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([seed_value, "fauna_mix_v2"])
 	var population := rng.randi_range(2, maxi(3, ceili(world.caves.size() * 0.4)))
@@ -4528,23 +5879,101 @@ func _roll_fauna_variant(family: String, rng: RandomNumberGenerator) -> String:
 	return OrganismTraits.roll(family, OrganismTraits.ANIMAL, rng)
 
 func _fauna_variant(species_id: String) -> Dictionary:
-	var recipe := OrganismTraits.decode(species_id, OrganismTraits.ANIMAL)
-	if not recipe.is_empty():
-		recipe.legs += 1
-		recipe.fur = recipe.fur == 1
-		return recipe
-	var fields := species_id.split("~")
-	if fields.size() != 7 or fields[1] != "1":
-		return {}
-	return {"legs": clampi(fields[2].to_int(), 1, 4), "color": clampi(fields[3].to_int(), 0, FAUNA_VARIANT_COLORS.size() - 1),
-		"fur": fields[4] == "1", "size": clampi(fields[5].to_int(), 0, FAUNA_VARIANT_SIZES.size() - 1),
-		"pattern": clampi(fields[6].to_int(), 0, FAUNA_VARIANT_PATTERNS.size() - 1)}
+	return OrganismPixelArt.animal_recipe(species_id)
 
-func _fauna_position(cave_id: int) -> Vector2:
+func _fauna_ground_is_clear(point: Vector2, cave_id: int) -> bool:
+	for offset in [Vector2.ZERO, Vector2(-7, 0), Vector2(7, 0), Vector2(0, -7), Vector2(0, 7)]:
+		var sample: Vector2 = point + offset
+		if not _point_inside_cave_id(sample, cave_id) or not _segment_is_walkable(sample, sample, true):
+			return false
+	for obstacle in world.obstacles:
+		if point.distance_to(obstacle.position) < float(obstacle.radius) + 7.0:
+			return false
+	if material_sites.has(cave_id) and point.distance_to(material_sites[cave_id]) < 16.0:
+		return false
+	return true
+
+func _fauna_safe_patrol(cave_id: int) -> PackedVector2Array:
+	if not is_same(fauna_path_world, world):
+		fauna_path_world = world
+		fauna_safe_paths.clear()
 	var start: Vector2 = fauna_sites[cave_id]
-	if not fauna_patrol_ends.has(cave_id):
-		return start
-	var finish: Vector2 = fauna_patrol_ends[cave_id]
+	var finish: Vector2 = fauna_patrol_ends.get(cave_id, start)
+	var key := hash([cave_id, start, finish, world.get("rock_ground_footprints_v1", false)])
+	if fauna_safe_paths.has(key):
+		return fauna_safe_paths[key]
+	var cave: Dictionary = world.caves[cave_id]
+	var bounds := Rect2(cave.position + cave.contour[0], Vector2.ZERO)
+	for corner in cave.contour:
+		bounds = bounds.expand(cave.position + corner)
+	var cell_size: float = world.cell_size
+	var low := Vector2i((bounds.position / cell_size).floor()).max(Vector2i.ZERO)
+	var high := Vector2i((bounds.end / cell_size).ceil()).min(Vector2i(world.grid_size) - Vector2i.ONE)
+	var grid := AStarGrid2D.new()
+	grid.region = Rect2i(low, high - low + Vector2i.ONE)
+	grid.cell_size = Vector2.ONE * cell_size
+	grid.offset = Vector2.ONE * cell_size * 0.5
+	grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_NEVER
+	grid.update()
+	var first := Vector2i(-1, -1)
+	var last := Vector2i(-1, -1)
+	var start_distance := INF
+	var finish_distance := INF
+	for y in range(low.y, high.y + 1):
+		for x in range(low.x, high.x + 1):
+			var cell := Vector2i(x, y)
+			var point := (Vector2(cell) + Vector2.ONE * 0.5) * cell_size
+			var clear := _fauna_ground_is_clear(point, cave_id)
+			grid.set_point_solid(cell, not clear)
+			if not clear: continue
+			if point.distance_squared_to(start) < start_distance:
+				first = cell
+				start_distance = point.distance_squared_to(start)
+			if point.distance_squared_to(finish) < finish_distance:
+				last = cell
+				finish_distance = point.distance_squared_to(finish)
+	var route := PackedVector2Array()
+	if first.x >= 0:
+		# Explore only edges that also fit the body between their endpoints.
+		# A blocked original destination must not collapse an entire patrol.
+		var queue: Array[Vector2i] = [first]
+		var parents: Dictionary = {first: first}
+		var best := first
+		var farthest := first
+		var cursor := 0
+		while cursor < queue.size() and cursor < 4096:
+			var cell: Vector2i = queue[cursor]
+			cursor += 1
+			var point := grid.get_point_position(cell)
+			if point.distance_squared_to(finish) < grid.get_point_position(best).distance_squared_to(finish): best = cell
+			if point.distance_squared_to(grid.get_point_position(first)) > grid.get_point_position(farthest).distance_squared_to(grid.get_point_position(first)): farthest = cell
+			for direction in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+				var next: Vector2i = cell + direction
+				if not grid.region.has_point(next) or parents.has(next) or grid.is_point_solid(next): continue
+				var clear_edge := true
+				for step in range(1, 5):
+					if not _fauna_ground_is_clear(point.lerp(grid.get_point_position(next), float(step) / 4), cave_id): clear_edge = false
+				if clear_edge:
+					parents[next] = cell
+					queue.append(next)
+		if grid.get_point_position(best).distance_to(grid.get_point_position(first)) < 14.0: best = farthest
+		var cell := best
+		while cell != first:
+			route.append(grid.get_point_position(cell))
+			cell = parents[cell]
+		route.append(grid.get_point_position(first))
+		route.reverse()
+	fauna_safe_paths[key] = route
+	return route
+
+func _fauna_position(cave_id: int, time_offset: float = 0.0) -> Vector2:
+	var hostile := defence_system.predator(self,cave_id)
+	if not hostile.is_empty(): return hostile.position
+	var route := _fauna_safe_patrol(cave_id)
+	if route.size() < 2:
+		return route[0] if not route.is_empty() else Vector2(fauna_sites[cave_id])
+	var distance := 0.0
+	for i in range(route.size() - 1): distance += route[i].distance_to(route[i + 1])
 	var id: String = fauna_species_by_room.get(cave_id, "escarabat")
 	var speed := 8.0 if _fauna_is_segmented(id) else 13.0
 	var recipe := _fauna_variant(id)
@@ -4553,20 +5982,28 @@ func _fauna_position(cave_id: int) -> Vector2:
 		speed *= 0.7
 	elif movement == 1:
 		speed *= 1.35
-	var travel_time := start.distance_to(finish) / speed
+	var travel_time := distance / speed
 	var pause := 1.2
-	var phase := fposmod(fauna_time + cave_id * 0.41, (travel_time + pause) * 2.0)
+	var phase := fposmod(fauna_time - float(fauna_pause.get(cave_id, 0.0)) + time_offset + cave_id * 0.41, (travel_time + pause) * 2.0)
 	if movement == 2:
 		phase = (phase + sin(phase * 7.0) * 0.09)
+	var along := clampf(phase * speed, 0.0, distance)
 	if phase >= travel_time + pause:
-		return finish.lerp(start, clampf((phase - travel_time - pause) / travel_time, 0.0, 1.0))
-	return start.lerp(finish, clampf(phase / travel_time, 0.0, 1.0))
+		along = distance - clampf((phase - travel_time - pause) * speed, 0.0, distance)
+	for i in range(route.size() - 1):
+		var length := route[i].distance_to(route[i + 1])
+		if along <= length: return route[i].lerp(route[i + 1], along / length)
+		along -= length
+	return route[-1]
 
 func _fauna_is_visible() -> bool:
 	return analysis_mode and _fauna_is_visible_in_room(selected_cave)
 
 func _fauna_is_visible_in_room(cave_id: int) -> bool:
-	return fauna_sites.has(cave_id) and _can_detect_species(fauna_species_by_room.get(cave_id, "")) and (seen_fauna.has(cave_id) or _room_is_fully_lit(cave_id))
+	var corpse := defence_system.predator(self,cave_id)
+	if not corpse.is_empty() and float(corpse.hp)<=0:
+		return _room_is_fully_lit(cave_id) or _is_revealed(corpse.position)
+	return fauna_sites.has(cave_id) and _can_detect_species(fauna_species_by_room.get(cave_id, "")) and (seen_fauna.has(cave_id) or _room_is_fully_lit(cave_id) or (_is_revealed(_fauna_position(cave_id)) and _can_use_tools_at(_fauna_position(cave_id), cave_id)))
 
 func _detect_fauna_near_unit() -> void:
 	if not analysis_mode or current_cave_id != selected_cave or seen_fauna.has(selected_cave) or not fauna_sites.has(selected_cave):
@@ -4578,21 +6015,79 @@ func _detect_fauna_near_unit() -> void:
 		seen_fauna[selected_cave] = true
 		queue_redraw()
 
+func _action_notice(message: String) -> void:
+	status_label.text = message.get_slice(" · ", 0) + " · CONSULTA L’AVÍS"
+	status_label.tooltip_text = message
+	if is_instance_valid(game_audio): game_audio.play("denied")
+	if not is_instance_valid(action_notice_label):
+		action_notice_label = Label.new()
+		action_notice_label.custom_minimum_size=Vector2(460,100)
+		action_notice_label.size=Vector2(460,100)
+		action_notice_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		action_notice_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		action_notice_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		action_notice_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		action_notice_label.add_theme_font_size_override("font_size", 16)
+		action_notice_label.add_theme_color_override("font_color", Color("ffd18b"))
+		action_notice_label.add_theme_stylebox_override("normal", preload("res://scripts/interface_theme.gd").frame())
+		ui_root.add_child(action_notice_label)
+	action_notice_label.text = message
+	action_notice_label.size = Vector2(460, 100)
+	action_notice_label.set_deferred("size",Vector2(460,100))
+	action_notice_label.position = Vector2((get_viewport_rect().size.x - 460) * 0.5, 175)
+	action_notice_label.modulate.a = 1.0
+	action_notice_label.show()
+	if action_notice_tween and action_notice_tween.is_valid(): action_notice_tween.kill()
+	action_notice_tween = create_tween()
+	action_notice_tween.tween_interval(5.0)
+	action_notice_tween.tween_property(action_notice_label, "modulate:a", 0.0, 0.3)
+
+func _scanner_requirement_notice() -> void:
+	_action_notice("RASTRE BIOLÒGIC · Requereix escàner Nv. 1 + Filtre espectral fèrric. Compra i activa el filtre a Base → Equip i millores.")
+
 func _select_flora(screen_position: Vector2) -> void:
+	for animal in [false, true]:
+		var sites := fauna_sites if animal else flora_sites
+		if _has_undetectable_trace(selected_cave, animal) and (_room_is_fully_lit(selected_cave) or _is_revealed(sites[selected_cave])):
+			var point: Vector2 = _fauna_position(selected_cave) if animal else sites[selected_cave]
+			var size := Vector2(26, 34) * _isometric_organism_scale()
+			if Rect2(_world_to_screen(point) - size * Vector2(0.5,0.9), size).has_point(screen_position):
+				_scanner_requirement_notice()
+				return
 	if bio_scan_room >= 0:
 		return
 	selected_flora = -1
 	selected_fauna = -1
 	var fauna_distance := screen_position.distance_to(_world_to_screen(_fauna_position(selected_cave))) if _fauna_is_visible() else INF
 	var flora_distance := screen_position.distance_to(_world_to_screen(flora_sites[selected_cave])) if _flora_is_visible() else INF
+	var hostile := defence_system.predator(self,selected_cave)
+	if _fauna_is_visible() and not hostile.is_empty() and defence_system.sprite_rect(self,hostile.position).has_point(screen_position): fauna_distance=0.0
+	if _fauna_is_visible():
+		var animal_id: String = fauna_species_by_room[selected_cave]
+		if not _fauna_variant(animal_id).is_empty() and OrganismPixelArt.animal_hit_rect(
+				_world_to_screen(_fauna_position(selected_cave)), _isometric_organism_scale(),
+				_fauna_variant(animal_id)).has_point(screen_position):
+			fauna_distance = 0.0
+	if _flora_is_visible():
+		var plant_id: String = flora_species_by_room[selected_cave]
+		if OrganismPixelArt.supports_plant(plant_id) and OrganismPixelArt.plant_hit_rect(
+				_world_to_screen(flora_sites[selected_cave]), 1.4 * _isometric_organism_scale(),
+				OrganismPixelArt.plant_recipe(plant_id)).has_point(screen_position):
+			flora_distance = 0.0
 	var animal_hit_radius := clampf(zoom_level * 4.2, 10.0, 20.0)
 	if fauna_distance <= animal_hit_radius or (fauna_distance <= 22.0 and fauna_distance <= flora_distance):
 		selected_fauna = selected_cave
+		if not hostile.is_empty() and float(hostile.hp)<=0 and not fauna_samples.has(selected_cave):
+			if _can_collect_flora_sample():
+				_collect_flora_sample()
+			else:
+				_action_notice("MOSTRA DE DEPREDADOR · Acosta’t al cos (menys de 38 unitats) i atura’t per recollir-la")
 	elif flora_distance <= 22.0:
 		selected_flora = selected_cave
 	_update_flora_button()
 	if (selected_fauna >= 0 and not analyzed_fauna.has(selected_fauna)) or (selected_flora >= 0 and not analyzed_flora.has(selected_flora)):
-		_interact_with_flora()
+		var corpse := defence_system.predator(self,selected_fauna)
+		if corpse.is_empty() or float(corpse.hp)>0: _interact_with_flora()
 	_layout_room_controls()
 	queue_redraw()
 
@@ -4607,7 +6102,7 @@ func _update_flora_button() -> void:
 	if is_instance_valid(collect_flora_button):
 		collect_flora_button.disabled = not _can_collect_flora_sample()
 		if selected_fauna >= 0 and selected_fauna == selected_cave:
-			collect_flora_button.tooltip_text = "Només es recullen mostres de flora"
+			collect_flora_button.tooltip_text = "Mostra recollida" if fauna_samples.has(selected_cave) else "Recull una mostra del depredador abatut"
 		elif _has_selected_scanned_flora():
 			collect_flora_button.tooltip_text = "Mostra recollida" if flora_samples.has(selected_cave) else "Recull una mostra de flora"
 		else:
@@ -4615,10 +6110,18 @@ func _update_flora_button() -> void:
 func _interact_with_flora() -> void:
 	var fauna := selected_fauna == selected_cave and _fauna_is_visible()
 	var flora := selected_flora == selected_cave and _flora_is_visible()
-	if bio_scan_room >= 0 or moving or mining_cave >= 0 or bio_scanner_integrity <= 0.0 or not (fauna or flora):
+	if bio_scanner_integrity <= 0.0:
+		_action_notice("ESCÀNER AVARIAT · Repara l’escàner Nv. %d al taller o amb la caixa d’eines." % (bio_scanner_tier + 1))
+		return
+	if moving or mining_cave >= 0 or bio_scan_room >= 0:
+		_action_notice("ATURA’T I ACABA L’ACCIÓ EN CURS PER ESCANEJAR")
+		return
+	if not (fauna or flora):
 		return
 	var scanned := analyzed_fauna.has(selected_cave) if fauna else analyzed_flora.has(selected_cave)
-	if scanned or not _can_use_tools_at(_bio_scan_target(selected_cave, fauna), selected_cave):
+	if scanned: return
+	if not _can_use_tools_at(_bio_scan_target(selected_cave, fauna), selected_cave):
+		_action_notice("IL·LUMINA L’ORGANISME AMB EL CASC I ENTRA A LA SEVA SALA PER ESCANEJAR · Escàner Nv. 1 o superior")
 		return
 	bio_scan_room = selected_cave
 	bio_scan_fauna = fauna
@@ -4630,14 +6133,19 @@ func _has_selected_scanned_flora() -> bool:
 	return selected_cave >= 0 and selected_flora == selected_cave and selected_fauna != selected_cave and analyzed_flora.has(selected_cave) and flora_sites.has(selected_cave)
 
 func _can_collect_flora_sample() -> bool:
+	if selected_fauna==selected_cave and selected_cave>=0:
+		var enemy := defence_system.predator(self,selected_cave)
+		return not enemy.is_empty() and float(enemy.hp)<=0 and not fauna_samples.has(selected_cave) and not moving and mining_cave<0 and bio_scan_room<0 and unit_position.distance_to(enemy.position)<=38.0 and _can_use_tools_at(enemy.position,selected_cave)
 	return _has_selected_scanned_flora() and not flora_samples.has(selected_cave) and mining_cave < 0 and bio_scan_room < 0 and _can_use_tools_at(flora_sites[selected_cave], selected_cave)
 
 func _collect_flora_sample() -> void:
 	if not _can_collect_flora_sample():
 		return
-	flora_samples[selected_cave] = false
+	var animal := selected_fauna==selected_cave
+	if animal: fauna_samples[selected_cave]=false
+	else: flora_samples[selected_cave] = false
 	_update_inventory_screen()
-	status_label.text = "MOSTRA DE FLORA RECOLLIDA · +1 PUNT"
+	status_label.text = "MOSTRA DE DEPREDADOR RECOLLIDA · +1 PUNT" if animal else "MOSTRA DE FLORA RECOLLIDA · +1 PUNT"
 	_update_flora_button()
 	_layout_room_controls()
 	_save_active_profile()
@@ -4670,6 +6178,8 @@ func _build_discovery_dialog() -> void:
 	discovery_photo.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 func _show_new_discovery(species_id: String, fauna: bool, point: Vector2) -> void:
+	if discovery_capture_pending:
+		return
 	discovery_species = species_id
 	discovery_is_fauna = fauna
 	var species := FAUNA_SPECIES if fauna else FLORA_SPECIES
@@ -4679,10 +6189,20 @@ func _show_new_discovery(species_id: String, fauna: bool, point: Vector2) -> voi
 	var display_name := family_name if OrganismTraits.decode(species_id, traits).is_empty() else OrganismTraits.display_name(species_id, family_name, int(family.get("biome", 1)))
 	discovery_dialog.title = ("Fauna nova" if fauna else "Flora nova") + " · " + display_name
 	discovery_photo.texture = null
+	# Capture a fresh frame with the scanner percentage and signal rings hidden.
+	if DisplayServer.get_name() != "headless":
+		var previous_photo_state := taking_field_photo
+		discovery_capture_pending = true
+		taking_field_photo = true
+		queue_redraw()
+		await RenderingServer.frame_post_draw
+		taking_field_photo = previous_photo_state
+		discovery_capture_pending = false
+		queue_redraw()
 	var viewport := get_viewport()
 	var visible_rect := viewport.get_visible_rect()
 	var center := _world_to_screen(point)
-	var frame := Rect2(center - Vector2(40, 30), Vector2(80, 60))
+	var frame := _organism_photo_frame(species_id, fauna, center)
 	if DisplayServer.get_name() != "headless" and visible_rect.encloses(frame) and not _over_ui(center):
 		var image := viewport.get_texture().get_image()
 		if image != null and not image.is_empty():
@@ -4697,6 +6217,11 @@ func _update_bio_scan(delta: float) -> void:
 	if bio_scan_room < 0:
 		return
 	var cave_id := bio_scan_room
+	var species: String = (fauna_species_by_room if bio_scan_fauna else flora_species_by_room).get(cave_id, "")
+	if not _can_detect_species(species):
+		_cancel_bio_scan()
+		_scanner_requirement_notice()
+		return
 	if moving or selected_cave != cave_id or not _can_use_tools_at(_bio_scan_target(cave_id, bio_scan_fauna), cave_id):
 		_cancel_bio_scan()
 		status_label.text = "ESCANEIG ATURAT · IL·LUMINA LA TROBALLA"
@@ -4770,7 +6295,7 @@ func _photograph_subject() -> void:
 	if field_photos.has(species_id):
 		return
 	var center := _world_to_screen(_camera_subject_position())
-	var frame := Rect2(center - Vector2(54, 40), Vector2(108, 80))
+	var frame := _organism_photo_frame(species_id, selected_fauna == selected_cave, center)
 	var viewport := get_viewport()
 	var visible_rect := viewport.get_visible_rect()
 	if not visible_rect.encloses(frame):
@@ -4943,6 +6468,7 @@ func _update_equipment_display() -> void:
 	_update_suit_display()
 	_update_field_equipment_buttons()
 	_update_inventory_screen()
+	defence_system.refresh_ui(self)
 
 func _update_field_equipment_buttons() -> void:
 	if not is_instance_valid(oxygen_reserve_card_button):
@@ -4963,7 +6489,7 @@ func _layout_room_controls() -> void:
 	if not navigation_panel.visible:
 		return
 	var x := 94.0
-	for button in [map_return_button, inspect_room_button, fit_map_button, center_explorer_button, base_return_button, descend_navigation_button, lower_level_button]:
+	for button in [map_return_button, inspect_room_button, fit_map_button, center_explorer_button, biome_base_return_button, base_return_button, descend_navigation_button, lower_level_button, unstuck_navigation_button]:
 		if not button.visible:
 			continue
 		button.position = Vector2(x, 9)
@@ -5016,20 +6542,80 @@ func _material_is_visible(cave_id: int) -> bool:
 func _material_marker_position(cave_id: int) -> Vector2:
 	return _world_to_screen(material_sites[cave_id]) - Vector2(0, 6.0 * zoom_level * 0.28)
 
+func _try_click_biome_base(screen_point: Vector2) -> bool:
+	if not analysis_mode or not _depth_has_workshop(current_level): return false
+	var cave: Dictionary = world.caves[world.entry]
+	if not _can_inspect_cave(cave.id): return false
+	var footprint := _biome_base_footprint(cave)
+	if footprint.size() != 4: return false
+	var anchor := Vector2.ZERO
+	for point in footprint: anchor += point
+	anchor /= 4.0
+	var texture := _biome_module_texture(_biome_at_depth(current_level))
+	var size := Vector2(texture.get_size()) * zoom_level * float(OXIDIZED_BASE_TEXTURE.get_width()) / float(texture.get_width()) * 0.034 * footprint[0].distance_to(footprint[1]) / 52.0
+	var atlas := _biome_at_depth(current_level) in OTHER_BIOME_PROFILES
+	if atlas: size *= 0.62
+	var area := Rect2(_world_to_screen(anchor) - size * Vector2(0.5, 0.96 if atlas else 0.88), size)
+	if not area.has_point(screen_point): return false
+	var local := (screen_point - area.position) / area.size
+	# Exclude the generous transparent margins of standalone sprites.
+	if not atlas and (local.x < 0.23 or local.x > 0.77 or local.y < 0.04 or local.y > 0.9): return false
+	if not _can_use_workshop():
+		status_label.text = "TORNA A LA SALA DE LA BASE PER OBRIR EQUIP I MILLORES"
+		return true
+	_open_inventory(true)
+	return true
+
+func _try_click_mineral(screen_point: Vector2) -> bool:
+	if not analysis_mode:
+		return false
+	var gallery := _inspection_gallery()
+	if gallery.is_empty() and isometric_passage_id >= 0:
+		gallery = _corridor_by_id(isometric_passage_id)
+	# Reverse the room painter order: the visible rock on top gets the click.
+	for i in range(world.caves.size() - 1, -1, -1):
+		var cave: Dictionary = world.caves[i]
+		if cave.id != selected_cave and not _can_inspect_cave(cave.id) and (gallery.is_empty() or (cave.id != gallery.a and cave.id != gallery.b)):
+			continue
+		if not _mineral_hit_test(cave.id, screen_point):
+			continue
+		if current_cave_id != cave.id or _cave_at_position(unit_position) != cave.id:
+			_action_notice("ENTRA A LA SALA %02d PER EXTREURE AQUESTA VETA" % (cave.id + 1))
+			return true
+		if selected_cave != cave.id:
+			var anchor_before := _world_to_screen(material_sites[cave.id])
+			selected_cave = cave.id
+			_update_view_mode_ui()
+			camera_offset += anchor_before - _world_to_screen(material_sites[cave.id])
+		_collect_material()
+		return true
+	return false
+
 func _collect_material() -> void:
-	if mining_cave >= 0 or bio_scan_room >= 0 or current_cave_id != selected_cave or not _material_is_visible(selected_cave):
+	if mining_cave >= 0:
+		_action_notice("EXTRACCIÓ EN CURS")
+		return
+	if bio_scan_room >= 0 or rockfall_clear_remaining > 0.0:
+		_action_notice("ACABA L’ACCIÓ EN CURS ABANS D’EXTREURE EL MINERAL")
+		return
+	if current_cave_id != selected_cave or _cave_at_position(unit_position) != selected_cave:
+		_action_notice("ENTRA A LA SALA DE LA VETA PER EXTREURE-LA")
+		return
+	if not _material_is_visible(selected_cave):
 		return
 	if mining_tool_integrity <= 0.0:
-		status_label.text = "EINA AVARIADA · REPARA-LA AL TALLER"
+		_action_notice("EINA AVARIADA · REPARA-LA AL TALLER")
 		return
 	if not _can_use_tools_at(material_sites[selected_cave], selected_cave):
+		_action_notice("IL·LUMINA LA VETA PER EXTREURE EL MINERAL")
 		return
 	if moving:
-		status_label.text = "ATURA’T PER EXTREURE EL MINERAL"
+		_action_notice("ATURA’T PER EXTREURE EL MINERAL")
 		return
 	var mineral := _mineral_type(selected_cave)
 	if mineral != "ferro" and not _modifier_protects("mineria", mineral):
-		status_label.text = "VETA DE %s · CAL EL CAPÇAL ADEQUAT" % mineral.to_upper()
+		var head := "Capçal de precisió" if mineral == "quars" else "Capçal reforçat"
+		_action_notice("VETA DE %s · Requereix eina de mineria Nv. 1 + %s. Millora l’eina a Base → Equip i millores i activa el capçal." % [mineral.to_upper(), head])
 		return
 	mining_cave = selected_cave
 	mining_remaining = _mining_duration(mining_tool)
@@ -5195,6 +6781,7 @@ func _update_low_supply_warning(delta: float) -> void:
 				inventory_strip_meters[slot].get_parent().get_parent().queue_redraw()
 		if not is_low:
 			warned_low_supplies.erase(slot)
+			if resource_gain_cards.has(slot): resource_gain_cards[slot].queue_redraw()
 			continue
 		if not was_low:
 			warned_low_supplies[slot] = true
@@ -5293,9 +6880,15 @@ func _gallery_has_continuous_signal(corridor: Dictionary, excluded_beacon: int =
 	var points: PackedVector2Array = corridor.points
 	var start := _project_to_polyline(corridor.exit_a, points)
 	var finish := _project_to_polyline(corridor.exit_b, points)
-	var span := PackedVector2Array([corridor.exit_a])
-	span.append_array(points.slice(int(start.segment) + 1, int(finish.segment) + 1))
-	span.append(corridor.exit_b)
+	# Projection can place the exits in reverse order on a winding route.
+	if float(start.segment) + float(start.t) > float(finish.segment) + float(finish.t):
+		var swap := start
+		start = finish
+		finish = swap
+	var span := PackedVector2Array([start.point])
+	if int(start.segment) < int(finish.segment):
+		span.append_array(points.slice(int(start.segment) + 1, int(finish.segment) + 1))
+	span.append(finish.point)
 	var sources := PackedVector2Array([world.caves[world.entry].position]) if initial_coverage_only else _signal_sources(excluded_beacon)
 	var range_override := BEACON_RANGE if initial_coverage_only else -1.0
 	for index in range(span.size() - 1):
@@ -5400,7 +6993,11 @@ func _deploy_beacon() -> void:
 	queue_redraw()
 
 func _draw_flora_symbol(canvas: CanvasItem, base: Vector2, scale: float, species_id: String = "falguera") -> void:
-	var recipe := OrganismTraits.decode(species_id, OrganismTraits.PLANT)
+	var recipe := OrganismPixelArt.plant_recipe(species_id)
+	if OrganismPixelArt.supports_plant(species_id):
+		var clock := fauna_time if canvas == self and analysis_mode and not taking_field_photo else 0.0
+		OrganismPixelArt.draw_plant(canvas, base, scale, recipe, clock, hash(species_id) & 0x7fffffff)
+		return
 	if not recipe.is_empty():
 		_draw_plant_variant(canvas, base, scale, recipe)
 		return
@@ -5473,12 +7070,14 @@ func _fauna_color(species_id: String) -> Color:
 	var fallback := "7f9cbe" if species_id == "isopode" else ("e56d58" if species_id == "escarabat_ferric" else "ffac62")
 	return Color(FAUNA_SPECIES.get(species_id, {}).get("color", fallback))
 
-func _draw_fauna_map_badge(canvas: CanvasItem, center: Vector2, species_id: String = "escarabat", icon_scale: float = 1.0, show_ring: bool = true) -> void:
-	if show_ring:
-		canvas.draw_circle(center, 9.0 * icon_scale, PANEL, true, -1.0, true)
-		canvas.draw_circle(center, 9.0 * icon_scale, Color("cba9ff"), false, 1.4, true)
+func _draw_fauna_map_badge(canvas: CanvasItem, center: Vector2, species_id: String = "escarabat", icon_scale: float = 1.0, _show_ring: bool = false, normalize_size: bool = false) -> void:
+	if species_id.begins_with("depredador_"):
+		defence_system.draw_badge(canvas,center,species_id,icon_scale)
+		return
 	var variant := _fauna_variant(species_id)
 	if not variant.is_empty():
+		if normalize_size:
+			variant.size = 4
 		_draw_fauna_variant(canvas, center, species_id, variant, icon_scale * 0.85)
 		return
 	var color := _fauna_color(species_id)
@@ -5489,6 +7088,10 @@ func _draw_fauna_map_badge(canvas: CanvasItem, center: Vector2, species_id: Stri
 		_draw_fauna_symbol(canvas, center, 0.65 * icon_scale, color)
 
 func _draw_fauna_variant(canvas: CanvasItem, center: Vector2, species_id: String, variant: Dictionary, icon_scale: float) -> void:
+	if OrganismPixelArt.supports_animal(species_id):
+		OrganismPixelArt.draw_animal(canvas, center, icon_scale, variant,
+			Vector2(1, 0.5), 0.0, false, FAUNA_VARIANT_COLORS)
+		return
 	var scale := icon_scale * (0.78 + 0.11 * int(variant.size))
 	var tint := Color(FAUNA_VARIANT_COLORS[variant.color])
 	var segmented := _fauna_is_segmented(species_id)
@@ -5600,7 +7203,9 @@ func _change_underground_level(destination: int, arrival: int) -> void:
 		rockfall_hit = false
 		var original_seed := seed_value
 		seed_value = hash([original_seed, "subterra_level_v1", destination]) & 0x7fffffff
-		world = Generator.generate(seed_value, destination >= 19, Generator.biome_at_depth(destination))
+		world = Generator.generate(seed_value, destination >= 19, _biome_at_depth(destination))
+		world["biome_profile"] = _biome_at_depth(destination)
+		world["campaign_order_version"] = 1
 		for field in LEVEL_STATE_FIELDS:
 			if get(field) is Dictionary and field != "world":
 				set(field, {})
@@ -5614,6 +7219,7 @@ func _change_underground_level(destination: int, arrival: int) -> void:
 		_assign_mineral_types(destination)
 		seed_value = original_seed
 	current_level = destination
+	discovered_biomes[_biome_at_depth(destination)] = true
 	expedition_record.depth = maxi(int(expedition_record.depth), destination)
 	var unlocked_reward := destination > deepest_reached and DEPTH_REWARDS.has(destination)
 	deepest_reached = maxi(deepest_reached, destination)
@@ -5651,7 +7257,10 @@ func _change_underground_level(destination: int, arrival: int) -> void:
 	_save_active_profile()
 
 func _descend_to_lower_level() -> void:
-	if not _can_descend_to_lower_level():
+	if not _at_lower_level_access():
+		return
+	if not _biome_exit_is_ready():
+		_notice_biome_exit_requirement()
 		return
 	if _is_unopened_shaft(descent_access):
 		if _ladder_uses_left() <= 0:
@@ -5661,11 +7270,17 @@ func _descend_to_lower_level() -> void:
 	_change_underground_level(current_level + 1, -1)
 
 func _can_descend_to_lower_level() -> bool:
+	return _at_lower_level_access() and _biome_exit_is_ready()
+
+func _at_lower_level_access() -> bool:
 	if mining_cave >= 0 or bio_scan_room >= 0:
 		return false
 	return _has_descent_elevator(descent_access) and analysis_mode and selected_cave == descent_access and current_cave_id == descent_access and not moving and _cave_at_position(unit_position) == descent_access and unit_position.distance_to(_level_access_position(descent_access)) <= 42.0
 
 func _new_world(value: int) -> void:
+	defence_state=ExpeditionDefence.defaults()
+	defence_system.reset()
+	campaign_biome_order = CampaignRules.order_for_seed(value)
 	if not expedition_record.is_empty():
 		_remember_current_biology()
 		if expedition_record.outcome == "En curs":
@@ -5708,6 +7323,8 @@ func _new_world(value: int) -> void:
 	seed_value = value
 	var start_time := Time.get_ticks_msec()
 	world = Generator.generate(seed_value)
+	world["biome_profile"] = 1
+	world["campaign_order_version"] = 1
 	descent_access = _pick_descent_access()
 	_place_descent_position()
 	fauna_sites.clear()
@@ -5807,6 +7424,7 @@ func _on_overlay_toggled(value: bool, overlay: String) -> void:
 		"contours": show_contours = value
 		"spawn": show_spawn = value
 		"signal_rings": show_signal_rings = value
+		"beacon_waves": show_beacon_waves = value
 		"findings": show_findings = value
 	queue_redraw()
 
@@ -5842,16 +7460,45 @@ func _discovery_percentage(count: Vector2i) -> String:
 	return "%d%%" % floori(100.0 * float(count.x) / float(count.y))
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion and not surface_mode and not analysis_mode:
+	_ensure_solid_room_rocks()
+	if event is InputEventMouseMotion and not surface_mode:
 		queue_redraw()
+		_refresh_room_progress()
+		if not dragging and not _over_ui(event.position):
+			var hovered := _hovered_room(event.position)
+			if hovered >= 0:
+				room_details_panel.show()
+				room_details_label.show()
+				_update_room_details_card(hovered)
+				_layout_catalogs_panel.call_deferred()
 	if discovery_dialog.visible or delete_profile_dialog.visible:
 		return
 	if death_dialog.visible or victory_dialog.visible or profiles_dialog.visible or depth_trip_dialog.visible or restart_run_dialog.visible or rewards_dialog.visible or history_dialog.visible:
 		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		var focus := get_viewport().gui_get_focus_owner()
+		if not focus is LineEdit and not focus is TextEdit:
+			if event.keycode==KEY_F:
+				defence_system.fire(self)
+				return
+			if event.keycode==KEY_F8:
+				_recover_stuck_explorer()
+				return
+	if event is InputEventMouseButton and event.pressed and event.button_index==MOUSE_BUTTON_LEFT and event.ctrl_pressed and not _over_ui(event.position):
+		var hostile := defence_system.predator(self,_cave_at_position(unit_position))
+		if not hostile.is_empty() and defence_system.sprite_rect(self,hostile.position).has_point(event.position): defence_system.fire(self)
+		return
 	if surface_mode:
 		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and not _over_ui(event.position):
-			if Geometry2D.is_point_in_polygon(event.position, _elevator_outline(_surface_hatch_center(), Vector2(56, 32))):
+			if Geometry2D.is_point_in_polygon(event.position, _elevator_outline(_surface_hatch_center(), _surface_elevator_extent())):
 				_descend_to_level_one()
+			else:
+				var action: String = surface_base_art.module_action_at(event.position, _surface_hatch_center(), _surface_art_scale())
+				match action:
+					"inventory": _open_inventory(false)
+					"catalog": _open_flora_catalog()
+					"workshop": _open_inventory(true)
+				if not action.is_empty() and is_instance_valid(game_audio): game_audio.play("ui")
 		elif event is InputEventKey and event.pressed and (event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER):
 			_descend_to_level_one()
 		return
@@ -5866,7 +7513,19 @@ func _input(event: InputEvent) -> void:
 			drag_origin = event.position
 		elif event.button_index == MOUSE_BUTTON_MIDDLE and not event.pressed:
 			dragging = false
+		elif event.button_index == MOUSE_BUTTON_RIGHT and not event.pressed:
+			dragging=false
 		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed and not _over_ui(event.position):
+			var ground := _screen_to_world(event.position)
+			var empty := _cave_at_position(ground)<0
+			if empty:
+				for corridor in world.get("corridors",[]):
+					if _distance_to_polyline(ground,corridor.points)<=float(corridor.width)*0.5: empty=false; break
+			if empty:
+				center_map_during_move=false
+				dragging=true
+				drag_origin=event.position
+				return
 			if rockfall_clear_remaining > 0.0:
 				return
 			if analysis_mode and moving and inspection_corridor_id >= 0 and _cave_at_position(unit_position) < 0:
@@ -5923,17 +7582,19 @@ func _input(event: InputEvent) -> void:
 				elif order.has("corridor_id"):
 					status_label.text = "CAP PAS TRANSITABLE PER AQUESTA GALERIA"
 		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed and not _over_ui(event.position):
+			if defence_system.recover_click(self,event.position): return
+			if _try_click_biome_base(event.position):
+				return
+			if _try_click_mineral(event.position):
+				return
 			if _clear_rockfall_at(event.position):
 				return
 			if rockfall_clear_remaining > 0.0:
 				return
 			if analysis_mode:
-				if _has_level_elevator(selected_cave) and Geometry2D.is_point_in_polygon(
-						event.position, _elevator_outline(_world_to_screen(_level_access_position(selected_cave)), _underground_elevator_extent())):
+				if _has_level_elevator(selected_cave) and (Geometry2D.is_point_in_polygon(
+						event.position, _elevator_outline(_world_to_screen(_level_access_position(selected_cave)), _underground_elevator_extent())) or _descent_shaft_hit(event.position,selected_cave)):
 					_approach_level_access(true)
-					return
-				if _material_is_visible(selected_cave) and event.position.distance_to(_material_marker_position(selected_cave)) <= 15.0 * _isometric_object_scale():
-					_collect_material()
 					return
 				_select_flora(event.position)
 			else:
@@ -6064,7 +7725,7 @@ func _update_view_mode_ui() -> void:
 		descend_button.visible = true
 		status_label.text = "SUPERFÍCIE · ACCÉS A COVES DISPONIBLE"
 	elif analysis_mode and selected_cave >= 0 and selected_cave < world.caves.size():
-		mode_heading_label.text = "%s · %d · Sala %02d" % [OXIDIZED_CAVES_NAME, -current_level, selected_cave + 1]
+		mode_heading_label.text = "%s · %d · Sala %02d" % [_profile_biome_name(current_level), -current_level, selected_cave + 1]
 		seed_edit.visible = false
 		new_game_button.visible = false
 		map_return_button.visible = true
@@ -6086,15 +7747,12 @@ func _update_view_mode_ui() -> void:
 		descend_button.visible = false
 	if is_instance_valid(level_panel):
 		level_panel.visible = not surface_mode
-		map_options_section.visible = not analysis_mode
-		level_panel.size.y = 54.0 if analysis_mode else 132.0
 		level_progress_strip.visible = not surface_mode
 	_update_beacon_status()
 	level_title_label.visible = not surface_mode
 	_layout_panels.call_deferred()
 	if not surface_mode:
-		var zone_start := 1 + floori(float(current_level - 1) / 3.0) * 3
-		var zone: String = DEPTH_ZONE_NAMES.get(current_level, DEPTH_ZONE_NAMES.get(zone_start, OXIDIZED_CAVES_NAME))
+		var zone := _profile_biome_name(current_level)
 		level_title_label.text = "%s · Estrat −%d" % [zone, current_level]
 	_update_flora_button()
 	_layout_catalogs_panel()
@@ -6112,11 +7770,20 @@ func _refresh_room_progress() -> void:
 		return
 	var cave_id := -1 if surface_mode or world.is_empty() else _hud_room_id()
 	room_progress_label.visible = not surface_mode and (cave_id >= 0 or moving)
+	var details_were_visible := room_details_panel.visible
+	room_details_label.visible = room_progress_label.visible and cave_id >= 0
+	room_details_panel.visible = room_details_label.visible
+	if details_were_visible != room_details_panel.visible:
+		_layout_catalogs_panel.call_deferred()
+	room_details_label.text = ""
 	room_progress_label.queue_redraw()
 	if not room_progress_label.visible:
 		return
 	if cave_id < 0 or (analysis_mode and moving and _cave_at_position(unit_position) < 0):
 		room_progress_label.text = "GALERIA"
+		room_details_label.hide()
+		room_details_panel.hide()
+		_layout_catalogs_panel.call_deferred()
 		return
 	var environment := _room_environment(cave_id)
 	var title := "SALA"
@@ -6127,7 +7794,62 @@ func _refresh_room_progress() -> void:
 	var explored_percent := 100 if explored_caves.has(cave_id) else floori(_room_reveal_ratio(world.caves[cave_id]) * 100.0)
 	room_progress_label.text = "%s %02d · %d%% ESCANEJAT" % [title, cave_id + 1, explored_percent]
 	if _is_biome_workshop(cave_id):
-		room_progress_label.text += " · TALLER"
+		room_progress_label.text += " · BASE"
+	if room_details_label.visible:
+		_update_room_details_card(cave_id)
+
+func _update_room_details_card(cave_id: int) -> void:
+	var scanned := explored_caves.has(cave_id)
+	var progress := _room_tasks(cave_id)
+	var percent := floori(100.0 * progress.x / maxi(1, progress.y)) if scanned else floori(_room_reveal_ratio(world.caves[cave_id]) * 100.0)
+	var complete := _room_is_complete(cave_id)
+	room_details_status.text = "SALA %02d · %s · %d%%" % [cave_id + 1, "Completa" if complete else ("Tasques" if scanned else "Escaneig"), percent]
+	room_details_status.add_theme_color_override("font_color", Color("ffd17e") if complete else CYAN)
+	room_details_meter.value = percent
+	var lines := _room_detail_lines(cave_id)
+	var signature := str([cave_id, lines])
+	if signature == room_details_signature:
+		return
+	room_details_signature = signature
+	room_details_label.text = ""
+	for child in room_details_rows.get_children():
+		room_details_rows.remove_child(child)
+		child.queue_free()
+	for line in lines:
+		var done := line in ["Escaneig complet", "Flora analitzada", "Fauna observada", "Veta extreta"] or line.begins_with("Equip preparat")
+		if line.begins_with("Galeries recorregudes"):
+			var galleries := _room_gallery_progress(cave_id)
+			done = galleries.x == galleries.y
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		room_details_rows.add_child(row)
+		var icon := Control.new()
+		icon.custom_minimum_size = Vector2(17, 18)
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(icon)
+		icon.draw.connect(_draw_room_register_indicator.bind(icon, done))
+		var label := _add_equipment_label(row, line, 12, Color("c6dadd"))
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+func _draw_room_register_indicator(icon: Control, done: bool) -> void:
+	var color := Color("32f36a") if done else Color("526e79")
+	var edge := PackedVector2Array([Vector2(5, 2), Vector2(12, 2), Vector2(15, 5), Vector2(15, 12), Vector2(12, 15), Vector2(5, 15), Vector2(2, 12), Vector2(2, 5), Vector2(5, 2)])
+	icon.draw_polyline(edge, color, 2.0, false)
+	if done:
+		icon.draw_polyline(PackedVector2Array([Vector2(5, 8), Vector2(8, 11), Vector2(16, 3)]), color, 2.0, false)
+
+func _draw_room_register_frame() -> void:
+	_draw_register_panel_frame(room_details_panel)
+
+func _draw_register_panel_frame(panel: Control) -> void:
+	var edge := _inventory_frame_outline(Rect2(Vector2.ONE, panel.size - Vector2(2, 2)), 8)
+	panel.draw_colored_polygon(edge, Color("050e12"))
+	edge.append(edge[0])
+	panel.draw_polyline(edge, Color("527f89"), 2.0, false)
+	panel.draw_rect(Rect2(16, 38, panel.size.x - 32, 1), Color("16404a"))
+	panel.draw_rect(Rect2(16, 38, 82, 1), CYAN)
 
 func _return_to_map(requested_zoom: float = 0.62) -> void:
 	isometric_passage_id = -1
@@ -6166,12 +7888,14 @@ func _expedition_emergency() -> String:
 	return ""
 
 func _death_summary(reason: String) -> String:
-	return "%s\n\nL’explorador ha mort. La pròxima expedició començarà a la superfície, amb equip inicial i una llavor nova." % reason
+	return "%s\n\nL’expedició s’ha acabat. Els materials que portaves es perden i no es poden recuperar. La pròxima sortida començarà en un món nou. Conserves el catàleg, les descobertes del perfil i les millores d’equip." % reason
 
 func _end_expedition(reason: String) -> void:
 	if death_dialog.visible:
 		return
 	_finish_expedition_record("Mort", reason)
+	_cancel_mining()
+	_cancel_bio_scan()
 	death_dialog.dialog_text = _death_summary(reason)
 	materials_in_pack = 0
 	quartz_in_pack = 0
@@ -6180,7 +7904,22 @@ func _end_expedition(reason: String) -> void:
 	_save_active_profile()
 
 func _restart_after_death() -> void:
+	if expedition_record.get("outcome","")!="Mort": return
+	death_dialog.hide()
+	var upgrades := {}
+	for field in ["equipped_boots","bio_scanner_tier","suit_tier","mining_tool","supply_tiers","owned_modifiers","equipped_modifiers","equipment_research_spent"]:
+		var value = get(field)
+		upgrades[field]=value.duplicate(true) if value is Dictionary else value
+	var weapon_tier: int=defence_state.weapon_tier
+	var shield_tier: int=defence_state.shield_tier
 	_start_run_with_new_seed()
+	for field in upgrades: set(field,upgrades[field])
+	defence_state.weapon_tier=weapon_tier
+	defence_state.shield_tier=shield_tier
+	defence_state.shield=40.0+20.0*shield_tier
+	oxygen_seconds=_oxygen_capacity()
+	flashlight_charge=_helmet_battery_duration()
+	_enter_surface_base()
 	_save_active_profile()
 
 func _start_run_with_new_seed() -> void:
@@ -6269,7 +8008,7 @@ func _request_depth_trip(destination: int) -> void:
 	if workshop_trip and not destination_state.is_empty() and origin != destination_state.world.entry:
 		var leg := _known_depth_leg(destination_state, origin, int(destination_state.world.entry))
 		if leg.is_empty():
-			status_label.text = "CAP RUTA PER GALERIES RECORREGUDES FINS AL TALLER"
+			status_label.text = "CAP RUTA PER GALERIES RECORREGUDES FINS A LA BASE"
 			return
 		var workshop_distance: float = leg.distance
 		if current_level == destination:
@@ -6299,7 +8038,7 @@ func _request_depth_trip(destination: int) -> void:
 func _confirm_depth_action(destination: int, action: Callable, warnings: PackedStringArray = PackedStringArray(), workshop_trip: bool = false) -> void:
 	var message := "Vols tornar a la base?"
 	if workshop_trip:
-		message = "Vols anar al taller de l’estrat −%d?" % destination
+		message = "Vols anar a «%s» (estrat −%d)?" % [_biome_base_name(destination), destination]
 	elif destination > 0:
 		var direction := "pujar" if destination < current_level else "baixar"
 		message = "Vols %s a l’estrat −%d?" % [direction, destination]
@@ -6379,6 +8118,9 @@ func _start_level_navigation(target: int) -> void:
 	if surface_mode or level_navigation_target >= 0 or mining_cave >= 0 or bio_scan_room >= 0 or rockfall_clear_remaining > 0.0:
 		return
 	var going_up: bool = target == world.entry
+	if not going_up and not _biome_exit_is_ready():
+		_notice_biome_exit_requirement()
+		return
 	if not going_up and _is_unopened_shaft(target) and _ladder_uses_left() <= 0:
 		status_label.text = "ESCALA ESGOTADA · REPARA-LA A LA BASE"
 		return
@@ -6388,13 +8130,13 @@ func _start_level_navigation(target: int) -> void:
 		move_path.clear()
 		_finish_level_navigation(target)
 		return
-	var reachable := _reachable_revealed_cells(unit_position, true)
+	var reachable := _reachable_revealed_cells(unit_position, true, true)
 	var cell := _nearest_revealed_walkable_in_cave(target, access_position, reachable)
 	var path: Array[Vector2] = []
 	if cell.x >= 0:
 		var arrival := (Vector2(cell) + Vector2.ONE * 0.5) * float(world.cell_size)
 		if arrival.distance_to(access_position) <= 42.0:
-			path = _find_path(unit_position, arrival, {}, true)
+			path = _find_path(unit_position, arrival, {}, true, -1, true)
 	if path.is_empty():
 		status_label.text = "CAP CAMÍ CONEGUT FINS A L’ACCÉS"
 		return
@@ -6405,7 +8147,7 @@ func _start_level_navigation(target: int) -> void:
 	level_navigation_target = target
 	center_map_during_move = true
 	moving = true
-	status_label.text = "CAMINANT CAP AL TALLER" if going_up and depth_trip_target == current_level else ("CAMINANT CAP A LA PUJADA" if going_up else "CAMINANT CAP A LA BAIXADA")
+	status_label.text = "CAMINANT CAP A LA BASE DEL BIOMA" if going_up and depth_trip_target == current_level else ("CAMINANT CAP A LA PUJADA" if going_up else "CAMINANT CAP A LA BAIXADA")
 	_update_base_return_availability()
 
 func _finish_level_navigation(target: int) -> void:
@@ -6416,7 +8158,7 @@ func _finish_level_navigation(target: int) -> void:
 		if depth_trip_target == current_level and _depth_has_workshop(current_level):
 			depth_trip_target = -1
 			_inspect_map_room(target, unit_position)
-			status_label.text = "TALLER DEL BIOMA · OBRE EQUIP I MILLORES"
+			status_label.text = _biome_base_name(current_level) + " · Obre Equip i millores"
 			_save_active_profile()
 			return
 		_finish_return_to_entry()
@@ -6436,13 +8178,20 @@ func _finish_return_to_entry() -> void:
 func _can_return_to_base() -> bool:
 	return not surface_mode and current_level == 1 and current_cave_id == world.entry and _cave_at_position(unit_position) == world.entry and not moving
 
+func _current_biome_base_depth() -> int:
+	# The final core has no workshop: its return base remains the Threshold.
+	return 19 if current_level >= 19 else CampaignRules.block_start(current_level)
+
 func _update_base_return_availability() -> void:
 	if not is_instance_valid(base_return_button):
 		return
 	var busy := surface_mode or level_navigation_target >= 0 or mining_cave >= 0 or bio_scan_room >= 0 or rockfall_clear_remaining > 0.0
 	base_return_button.disabled = busy
+	biome_base_return_button.disabled = busy
+	biome_base_return_button.visible = not surface_mode and current_level > 0
+	biome_base_return_button.tooltip_text = "Torna a la base de %s per una ruta coneguda." % _profile_biome_name(_current_biome_base_depth())
 	descend_navigation_button.disabled = busy
-	for button in [base_return_button, descend_navigation_button]:
+	for button in [base_return_button, descend_navigation_button, biome_base_return_button]:
 		if button.get_parent() != navigation_panel:
 			button.reparent(navigation_panel, false)
 	var has_descent := not surface_mode and _has_descent_elevator(descent_access)
@@ -6459,6 +8208,10 @@ func _update_base_return_availability() -> void:
 		if selected_cave != world.entry:
 			descend_navigation_button.hide()
 		lower_level_button.text = ("VEURE EL FINAL" if expedition_completed else "INVESTIGA EL NUCLI") if final_research else (("↑ " if selected_cave == world.entry else "↓ ") + _level_access_label(selected_cave))
+		lower_level_button.tooltip_text = ""
+		if not final_research and selected_cave!=world.entry and not _biome_exit_is_ready():
+			lower_level_button.text = "↓ EQUIP PENDENT"
+			lower_level_button.tooltip_text = _biome_exit_requirement()
 	_layout_room_controls()
 
 func _can_complete_final_research() -> bool:
@@ -6477,7 +8230,7 @@ func _can_use_selected_level_access() -> bool:
 	if surface_mode or not analysis_mode or moving or mining_cave >= 0 or bio_scan_room >= 0 or not _has_level_elevator(selected_cave):
 		return false
 	if selected_cave != world.entry:
-		return _can_descend_to_lower_level()
+		return _at_lower_level_access()
 	return current_cave_id == selected_cave and _cave_at_position(unit_position) == selected_cave and unit_position.distance_to(world.caves[selected_cave].position) <= 42.0
 
 func _use_selected_level_access() -> void:
@@ -6572,7 +8325,65 @@ func _nearest_visible_preview_cell(cave_id: int, point: Vector2) -> Vector2:
 				nearest = cell_center
 	return nearest
 
+func _recover_stuck_explorer() -> void:
+	if death_dialog.visible or discovery_dialog.visible or world.is_empty(): return
+	var origin := unit_position
+	var room := _cave_at_position(origin)
+	var gallery := {}
+	if room<0:
+		var nearest := INF
+		for corridor in world.corridors:
+			var distance := _distance_to_polyline(origin,corridor.points)
+			if _point_inside_corridor(origin,corridor) and distance<nearest:
+				gallery=corridor
+				nearest=distance
+	_cancel_mining()
+	_cancel_bio_scan()
+	moving=false
+	dragging=false
+	center_map_during_move=false
+	move_path.clear()
+	selected_route.clear()
+	chained_cave_id=-1
+	level_navigation_target=-1
+	depth_trip_target=-1
+	use_elevator_on_arrival=false
+	inspect_on_cave_arrival=false
+	inspection_corridor_id=-1
+	inspection_destination_cave_id=-1
+	rockfall_clear_remaining=0.0
+	var destination := origin
+	if not surface_mode:
+		var start_cell := Vector2i((origin/float(world.cell_size)).floor())
+		for radius in [10.0,20.0,30.0]:
+			for index in range(16):
+				var candidate: Vector2 = origin+Vector2.from_angle(float(index)*TAU/16.0)*float(radius)
+				if room>=0 and not _point_inside_cave_id(candidate,room): continue
+				if room<0 and (gallery.is_empty() or not _point_inside_corridor(candidate,gallery)): continue
+				if not _is_revealed(candidate): continue
+				var clear := true
+				for offset in [Vector2.ZERO,Vector2(4,0),Vector2(-4,0),Vector2(0,4),Vector2(0,-4)]:
+					if not _segment_is_walkable(candidate+offset,candidate+offset): clear=false
+				var steps := maxi(1,ceili(radius/2.0))
+				for step in range(1,steps+1):
+					var point := origin.lerp(candidate,float(step)/steps)
+					# A legacy blocked starting cell may be exited, never another obstacle.
+					if Vector2i((point/float(world.cell_size)).floor())==start_cell: continue
+					if not _segment_is_walkable(point,point): clear=false
+				if fauna_sites.has(room) and candidate.distance_to(_fauna_position(room))<22.0: clear=false
+				if clear: destination=candidate; break
+			if destination!=origin: break
+	unit_position=destination
+	move_target=destination
+	map_options_window.hide()
+	_update_view_mode_ui()
+	_action_notice("EXPLORADOR RECUPERAT · Ordres cancel·lades, punt lliure proper" if destination!=origin else "ORDRES REINICIADES · Tria un altre punt de moviment")
+	queue_redraw()
+	_save_active_profile()
+
 func _find_path(from: Vector2, to: Vector2, gallery: Dictionary = {}, known_galleries_only: bool = false, explore_room: int = -1, completed_only: bool = false) -> Array[Vector2]:
+	if gallery.is_empty() and explore_room<0 and _cave_at_position(from)>=0 and _cave_at_position(to)>=0 and _cave_at_position(from)!=_cave_at_position(to):
+		return _find_graph_gallery_route(from,to,known_galleries_only,completed_only)
 	var path: Array[Vector2] = []
 	var grid_size: Vector2i = world.grid_size
 	var cell_size: float = world.cell_size
@@ -6644,6 +8455,14 @@ func _find_path(from: Vector2, to: Vector2, gallery: Dictionary = {}, known_gall
 	for index in range(1, reversed_path.size()):
 		var cell_index: int = reversed_path[index]
 		path.append(Vector2((float(cell_index % grid_size.x) + 0.5) * cell_size, (float(cell_index / grid_size.x) + 0.5) * cell_size))
+	if completed_only:
+		# Automatic returns retain the validated cell route. Replacing portions
+		# with nearby corridor centerlines can introduce shortcuts at crossings.
+		var last := from
+		for point in path:
+			if not _segment_is_walkable(last,point) or not _is_known_room_route_point(point,true): return []
+			last=point
+		return path
 	if explore_room >= 0:
 		return _smooth_room_path(from, path, explore_unknown)
 	var corridor_path := _follow_corridor_centerlines(path, int(gallery.get("id", -1)))
@@ -6658,6 +8477,58 @@ func _find_path(from: Vector2, to: Vector2, gallery: Dictionary = {}, known_gall
 					return path
 			previous_point = point
 	return smoothed
+
+func _find_graph_gallery_route(from: Vector2, to: Vector2, known_only: bool, completed_only: bool) -> Array[Vector2]:
+	var result: Array[Vector2] = []
+	var start := _cave_at_position(from)
+	var goal := _cave_at_position(to)
+	var parents := {start:start}
+	var links := {}
+	var queue: Array[int] = [start]
+	var head := 0
+	while head<queue.size() and not parents.has(goal):
+		var room := queue[head]
+		head+=1
+		for corridor in world.corridors:
+			if corridor.a!=room and corridor.b!=room: continue
+			if completed_only and not completed_gallery_traces.has(corridor.id): continue
+			if known_only and not completed_gallery_traces.has(corridor.id) and not discovered_exits.has(_exit_key(room,corridor.id)): continue
+			var next: int = corridor.b if corridor.a==room else corridor.a
+			if parents.has(next): continue
+			parents[next]=room
+			links[next]=corridor
+			queue.append(next)
+	if not parents.has(goal): return result
+	var rooms: Array[int] = []
+	var room := goal
+	while room!=start:
+		rooms.push_front(room)
+		room=parents[room]
+	var cursor := from
+	room=start
+	for next in rooms:
+		var corridor: Dictionary = links[next]
+		var mouth: Vector2 = corridor.exit_a if corridor.a==room else corridor.exit_b
+		var other: Vector2 = corridor.exit_b if corridor.a==room else corridor.exit_a
+		var approach := _find_path(cursor,mouth,{},false,room)
+		if approach.is_empty() and cursor.distance_to(mouth)>float(world.cell_size)*1.5: return []
+		result.append_array(approach)
+		var last: Vector2 = result.back() if not result.is_empty() else cursor
+		if not _segment_is_walkable(last,mouth): return []
+		result.append(mouth)
+		var span := _route_span_on_corridor(mouth,other,corridor)
+		if span.is_empty(): return []
+		for point in span:
+			if not _segment_is_walkable(result.back(),point): return []
+			result.append(point)
+		if not _segment_is_walkable(result.back(),other): return []
+		result.append(other)
+		cursor=other
+		room=next
+	var final_path := _find_path(cursor,to,{},false,goal)
+	if final_path.is_empty() and cursor.distance_to(to)>float(world.cell_size)*1.5: return []
+	result.append_array(final_path)
+	return result
 
 func _is_known_room_route_point(point: Vector2, completed_only: bool = false) -> bool:
 	var room := _cave_at_position(point)
@@ -7074,6 +8945,8 @@ func _reveal_around(center: Vector2, radius_cells: int) -> void:
 	if analysis_mode and reveal_cave_id == selected_cave and reveal_cave_id >= 0:
 		var cave: Dictionary = world.caves[reveal_cave_id]
 		if not explored_caves.has(reveal_cave_id) and _room_reveal_ratio(cave) >= 0.90:
+			for node in get_children():
+				if node.get_script()==preload("res://scripts/cave_lighting.gd"): node.begin_room_reveal(cave)
 			_reveal_entire_room(cave)
 			_scan_current_cave()
 			if is_instance_valid(status_label):

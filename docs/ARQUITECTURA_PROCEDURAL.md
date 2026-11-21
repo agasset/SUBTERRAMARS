@@ -59,3 +59,13 @@ En P0A els accessos inferiors poden ser punts reservats; les garanties entre niv
 20 nivells totals. Biomes: 1–3, 4–6, 7–9, 10–12, 13–15 i 16–18. Els nivells 19 i 20 tenen identitat estructural especial reconeixible, amb coves, espècies i investigacions procedurals. Noms i trets concrets provisionals. Vegeu la secció 24 del mestre. Conservar les garanties de navegació, objectius assolibles i persistència. P0A continua amb un nivell; els tres nivells de prova no substitueixen la campanya de 20.
 
 Derivar el perfil dels nivells 1–18 amb floor((level_index - 1) / 3) + 1. Assignar perfils especials explícits als índexs 19 i 20. Validar l’índex 1–20 abans de generar. Guardar biome_id/special_zone_id, structure_profile_version i les investigacions amb el seu progrés; no recalcular-les en carregar. Generar objectius només sobre contingut assolit o garantit i després validar-ne dependències.
+
+## Revisió d’ordre de campanya — 20/11/2026
+
+Per a partides noves, la fórmula antiga biome_at_depth identifica únicament el bloc físic. La partida desa campaign_biome_order = [1, permutació de 4/7/10/13, 16, 19, 20], validat i estable, amb vuit entrades. La representació i selecció d’espècies utilitzen _biome_at_depth amb aquest ordre; la generació rep explícitament el perfil correcte. Un món nou incorpora biome_profile i campaign_order_version. No s’ha canviat la geometria dels desaments existents; la manca d’ordre es tracta com a ordre clàssic.
+
+La descoberta de noms és persistent per identitat a discovered_biomes del perfil, separada del número màxim d’estrat assolit. Els requisits són regles de transició de frontera, no regeneració ni canvis de coordenades. Es comproven abans del consum d’escala. Els retorns no requereixen haver mantingut el modificador actiu. La bateria campaign_rules_check.gd valida reproducció de 50 ordres, identitats als 20 estrats, recursos bàsics, transicions i compatibilitat dels desaments.
+
+## Defensa i recuperació persistents — 20/11/2026
+
+L’estat dels depredadors es desa dins el món, indexat per sala, amb identitat biològica lligada a fauna_species_by_room. La IA canvia posició només durant simulació: nodes i arestes segures segons màscara compartida, amb cerques acotades i sense travessar roques. Renderització, zoom i canvi de vista no creen enemics ni reinicien salut. Equip global a defence_state, camp opcional en versions antigues. Els paquets de materials perduts són world.recovery_caches_v1 amb marca recovered abans de la recompensa; la derrota no crea una llavor nova. Les singularitats reutilitzen petjades d’obstacles; la migració de goteres obre les velles cel·les de decoració del sostre sense canviar el graf ni moure l’explorador.

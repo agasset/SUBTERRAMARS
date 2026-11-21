@@ -7,8 +7,10 @@ const WORLD_RECT := Rect2(0, 0, 2200, 1500)
 const MIN_DISTANCE := 205.0
 const CELL_SIZE := 10.0
 const GRID_SIZE := Vector2i(220, 150)
-const GENERATOR_VERSION := "p0b-4"
-const LAYOUT_SEED_VERSION := "p0b-2"
+const GENERATOR_VERSION := "p0b-5"
+const LAYOUT_SEED_VERSION := "p0b-3"
+const BASE_BIOMES := [1, 4, 7, 10, 13, 16, 19]
+const BASE_ENTRY_MIN_RADIUS := 100.0
 
 # Room aspect, radial irregularity, corridor bend, corridor width.
 const BIOME_GEOMETRY := {
@@ -127,6 +129,8 @@ static func generate(seed_value: int, final_level: bool = false, biome: int = 1)
 			if not style.is_empty():
 				var circular := Vector2.from_angle(angle) * radius
 				point = circular.lerp(point, float(style[1])) * (style[0] as Vector2)
+			if i == root and biome in BASE_BIOMES:
+				point = point.normalized() * maxf(point.length(), BASE_ENTRY_MIN_RADIUS)
 			contour.append(point)
 		caves.append({"id": i, "position": points[i], "radius": radius, "contour": contour, "size_class": size_class})
 
@@ -152,7 +156,10 @@ static func _fallback(seed_value: int) -> Dictionary:
 		var contour := PackedVector2Array()
 		for j in range(12):
 			var angle := TAU * float(j) / 12.0
-			contour.append(Vector2(cos(angle) * 70, sin(angle) * 55))
+			var point := Vector2(cos(angle) * 70, sin(angle) * 55)
+			if i == 0:
+				point = point.normalized() * maxf(point.length(), BASE_ENTRY_MIN_RADIUS)
+			contour.append(point)
 		caves.append({"id": i, "position": p, "radius": 65.0, "contour": contour, "size_class": 1})
 		if i > 0:
 			var previous := i - 1 if i % 5 != 0 else i - 5

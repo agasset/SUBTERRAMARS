@@ -474,3 +474,21 @@ Validar límits 3/4, 6/7, 9/10, 12/13, 15/16, 18/19 i 19/20. Comprovar 20 nivell
 
 La primera fita continua sent P0A amb un nivell. El prototip abreujat de tres nivells és només una eina de prova. Afegir després una validació de campanya de 20 nivells i dels perfils especials, sense exigir que P0A contingui tot el joc.
 
+
+## Revisió de campanya acordada — 20/11/2026
+
+Aquesta decisió posterior preval sobre la correspondència fixa antiga de noms als estrats. Es conserven 20 nivells i blocs de tres: Coves oxidades 1–3; els quatre biomes centrals es permuten per llavor entre els blocs 4–6, 7–9, 10–12 i 13–15; Abisme biològic 16–18, Llindar 19 i Nucli 20 queden fixos. L’ordre forma part de la partida desada i no canvia de vista ni en tornar a la base. Les partides anteriors no es reordenen en carregar.
+
+Superar cada bioma requereix una preparació característica a més de l’escala. Primera versió executable: escàner Nv. 2 en sortir de Coves oxidades; capçal de precisió a Cavernes cristal·lines; grampons a Galeries glacials; drenatge a Jardins subterranis; sola tèrmica o vestit amb aïllament tèrmic a Fractures geotèrmiques; filtre de bioluminescència a Abisme biològic; escàner Nv. 3 per superar Llindar. Els detalls de nivell/cost són provisionals d’equilibri. Els modificadors han d’estar actius i les peces operatives. El retorn cap amunt continua disponible i un intent rebutjat no consumeix escala.
+
+Els noms només s’exposen quan el bioma consta descobert al perfil, independentment del bloc que ocupi. Cal preservar garanties de recursos bàsics i evitar dependències circulars o espècies rares obligatòries. Vegeu ESTAT_PROJECTE.md i campaign_rules.gd per la implementació i les proves realment fetes.
+
+## Revisió autoritzada: fauna hostil i defensa — 20/11/2026
+
+Albert demana explícitament animals que poden atacar, més letals amb la profunditat, una arma com a equip i escut personal. Aquesta revisió amplia l’exclusió anterior de combat: es permet una defensa limitada dins de l’exploració científica, mantenint fora d’abast ecologia completa i cadenes alimentàries. Primera versió: projector de polsos, escut recarregable, fauna local amb atac anunciat i retirada possible. Els animals immobilitzats poden ser observats; les recompenses científiques no es donen per atacar.
+
+L’equip es desa i es millora al taller; la letalitat segueix la profunditat física, no l’ordre aleatori del bioma. Valors i costos de la primera implementació són provisionals fins a prova manual. Un fracàs conserva el món, deixant els materials recuperables al lloc i retornant a superfície sense canviar de llavor. Afegides singularitats ambientals pròpies de cada bioma, goteres més grans ancorades al mur i llacs superficials amb la part prima a la paret. Detall d’implementació i proves a ESTAT_PROJECTE.md.
+
+## Revisió de fracàs confirmada — 21/11/2026
+
+Albert confirma que morir acaba l’expedició i inicia un món nou amb llavor nova. Els materials a sobre es perden sense recuperació. Es conserven catàleg, descobertes del perfil i millores permanents. Aquesta decisió substitueix expressament les regles anteriors de paquet recuperable i món conservat després de morir. Tornar normalment a base continua conservant el món actual. F8 és una recuperació local d’encallament, no un reinici ni un retorn a base.

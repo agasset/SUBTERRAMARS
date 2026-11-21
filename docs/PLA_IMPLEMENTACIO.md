@@ -58,3 +58,11 @@ Llegeix també docs/ARQUITECTURA_PROCEDURAL.md. Implementa el visor de llavors a
 ## Fita posterior P0G — Campanya i biomes
 
 Expandir el recorregut abreujat de P0F a 20 nivells. Implementar sis perfils de bioma de tres nivells i dos perfils especials, investigacions procedurals resolubles i persistència. Verificar fronteres de bioma, final al 20, variació per llavor i identitat recognoscible dels dos perfils especials.
+
+### Fita executable: ordre de biomes i descensos condicionats — 20/11/2026
+
+Implementats ordre per llavor dels quatre blocs centrals, conservació dels extrems i desaments antics, descoberta persistent per identitat i set requisits d’equip en fronteres. Proves automatitzades a campaign_rules_check.gd, biome_names_check.gd i all_biomes_preview.gd. L’equilibri inicial evita requisits de mineral/espècie circulars; pendent partida manual de ritme, consumibles i retorns a taller. Detall a ESTAT_PROJECTE.md.
+
+### Fita executable: aigua, singularitats i defensa — 20/11/2026
+
+Implementada la petició explícita d’afegir depredadors, projector i escut, més letalitat amb profunditat. Integrats vuit elements ambientals diferents, goteres i llacs grans a paret, equip/millores, sons i retorn d’emergència amb materials recuperables al mateix món. Proves automatitzades i captures en wet_defence_check.gd, defence_recovery_check.gd i all_biomes_preview.gd. Pendent equilibrar amb partida manual; no s’ha afegit ecologia completa. Vegeu ESTAT_PROJECTE.md.
